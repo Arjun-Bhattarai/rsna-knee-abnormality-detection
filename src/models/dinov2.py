@@ -5,10 +5,7 @@ from transformers import AutoImageProcessor, AutoModel
 
 class DINOv2Backbone(nn.Module):
     """
-    DINOv2 vision backbone.
-
-    Converts single-channel MRI slices to 3-channel images
-    and extracts a study-independent feature vector.
+    DINOv2 vision backbone for MRI slices.
     """
 
     def __init__(
@@ -27,6 +24,21 @@ class DINOv2Backbone(nn.Module):
         )
 
         self.feature_dim = self.model.config.hidden_size
+
+        # DINOv2 uses ImageNet normalization
+        self.register_buffer(
+            "mean",
+            torch.tensor(
+                [0.485, 0.456, 0.406]
+            ).view(1, 3, 1, 1),
+        )
+
+        self.register_buffer(
+            "std",
+            torch.tensor(
+                [0.229, 0.224, 0.225]
+            ).view(1, 3, 1, 1),
+        )
 
         if freeze:
             self.freeze()
@@ -61,7 +73,9 @@ class DINOv2Backbone(nn.Module):
                 f"Expected 1 or 3 channels, got {x.shape[1]}"
             )
 
+        # ImageNet normalization
+        x = (x - self.mean) / self.std
+
         outputs = self.model(pixel_values=x)
 
         return outputs.last_hidden_state[:, 0]
-    
