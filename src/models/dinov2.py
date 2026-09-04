@@ -6,26 +6,30 @@ from transformers import AutoImageProcessor, AutoModel
 class DINOv2Backbone(nn.Module):
     """
     DINOv2 vision backbone for MRI slices.
+
+    Supports loading from a local Kaggle model path,
+    so no internet access is required.
     """
 
     def __init__(
         self,
-        model_name: str = "facebook/dinov2-base",
+        model_name: str = "/kaggle/input/models/metaresearch/dinov2/pytorch/base/1",
         freeze: bool = True,
     ):
         super().__init__()
 
         self.processor = AutoImageProcessor.from_pretrained(
-            model_name
+            model_name,
+            local_files_only=True,
         )
 
         self.model = AutoModel.from_pretrained(
-            model_name
+            model_name,
+            local_files_only=True,
         )
 
         self.feature_dim = self.model.config.hidden_size
 
-        # DINOv2 uses ImageNet normalization
         self.register_buffer(
             "mean",
             torch.tensor(
@@ -73,7 +77,6 @@ class DINOv2Backbone(nn.Module):
                 f"Expected 1 or 3 channels, got {x.shape[1]}"
             )
 
-        # ImageNet normalization
         x = (x - self.mean) / self.std
 
         outputs = self.model(pixel_values=x)
