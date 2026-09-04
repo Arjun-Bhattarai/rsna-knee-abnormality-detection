@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 
 from .normalization import percentile_normalize
@@ -6,7 +7,7 @@ from .sampling import uniform_sample_slices
 
 
 def preprocess_volume(
-    volume: torch.Tensor,
+    volume: np.ndarray | torch.Tensor,
     num_slices: int = 32,
     image_size: tuple[int, int] = (224, 224),
 ) -> torch.Tensor:
@@ -14,16 +15,26 @@ def preprocess_volume(
     Complete MRI preprocessing pipeline.
 
     Input:
-        volume: (D, H, W)
+        volume: (D, H, W), NumPy array or torch.Tensor
 
     Output:
         processed volume: (num_slices, H, W)
     """
 
+    # Convert to NumPy for intensity normalization
+    if isinstance(volume, torch.Tensor):
+        volume = volume.detach().cpu().numpy()
+
+    if not isinstance(volume, np.ndarray):
+        raise TypeError(
+            f"Expected NumPy array or torch.Tensor, got {type(volume)}"
+        )
+
     # Normalize intensity
-    volume = torch.from_numpy(
-        percentile_normalize(volume.numpy())
-    )
+    volume = percentile_normalize(volume)
+
+    # Convert to tensor
+    volume = torch.from_numpy(volume)
 
     # Resize each slice
     volume = resize_volume(
