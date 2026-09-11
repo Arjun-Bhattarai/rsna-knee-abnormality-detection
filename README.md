@@ -6,7 +6,7 @@ A PyTorch research codebase for multi-label abnormality detection from knee MRI 
 
 The reusable dataset, preprocessing, model, loss, metric, and trainer components are implemented under `src/` and covered by tests under `tests/`. The current end-to-end training entry point is `train_rsna_knee_v2.py`, which is designed for an offline Kaggle submission environment.
 
-The files in `scripts/` and `configs/` are scaffolding for a future modular CLI; they are currently empty and should not be treated as runnable commands yet.
+The only auxiliary script currently retained is `scripts/check_folds.py`, which reports fold and label distributions from `data/train.csv`. The end-to-end training entry point remains `train_rsna_knee_v2.py`.
 
 ## Model Overview
 
@@ -109,4 +109,4 @@ The v2 training script addresses this by requiring pretrained weights to be stag
 - The modular dataset currently drops rows with missing target labels.
 - The training criterion and metric operate on the 12-target multi-label output.
 - Keep large DICOM datasets, checkpoints, and generated predictions outside version control.
-- The modular training and inference command wiring still needs to be completed before `scripts/train.py` and `scripts/inference.py` can be used as CLI entry points.
+- `scripts/check_folds.py` is a diagnostic utility; training and inference use `train_rsna_knee_v2.py`.
