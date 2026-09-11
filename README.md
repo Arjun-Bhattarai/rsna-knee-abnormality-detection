@@ -1,10 +1,10 @@
 # RSNA Knee Abnormality Detection
 
-A PyTorch research codebase for multi-label abnormality detection from knee MRI studies. The model uses three anatomical views (sagittal, coronal, and axial), selects fluid-sensitive series from DICOM metadata, aggregates slices with attention, and predicts 12 abnormalities for each study.
+A PyTorch research codebase for the RSNA Knee Abnormality Detection Kaggle competition. It performs multi-label abnormality detection from knee MRI studies using three anatomical views (sagittal, coronal, and axial), fluid-sensitive series selection, attention-based slice aggregation, and 12 abnormality predictions for each study.
 
 ## Project Status
 
-The reusable dataset, preprocessing, model, loss, metric, and trainer components are implemented under `src/` and covered by tests under `tests/`. The current end-to-end training entry point is `train_rsna_knee_v2.py`, which is designed for an offline Kaggle submission environment.
+This repository contains the training and experiment code for a Kaggle competition submission. The reusable dataset, preprocessing, model, loss, metric, and trainer components are implemented under `src/` and covered by tests under `tests/`. The current end-to-end training entry point is `train_rsna_knee_v2.py`, which is designed for an offline Kaggle submission environment.
 
 The only auxiliary script currently retained is `scripts/check_folds.py`, which reports fold and label distributions from `data/train.csv`. The end-to-end training entry point remains `train_rsna_knee_v2.py`.
 
@@ -29,8 +29,7 @@ src/
 	preprocessing/   normalization, sampling, and transforms
 	models/          backbone, slice aggregation, view fusion, and model
 	training/        losses and training loop
-	inference/       prediction utilities
-	utils/           metrics, logging, seeding, and configuration helpers
+	utils/           metrics and related helpers
 tests/             unit tests for the implemented modules
 train_rsna_knee_v2.py
 									 standalone offline/Kaggle training and inference script
