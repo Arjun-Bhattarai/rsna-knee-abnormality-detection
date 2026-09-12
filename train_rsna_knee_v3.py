@@ -48,12 +48,12 @@ class Config:
         "Synovitis", "Baker's", "Contusion", "Fracture"
     ]
     IMAGE_SIZE = (224, 224)
-    NUM_SLICES = 4
+    NUM_SLICES = 3
     MAX_SERIES = 2
     BATCH_SIZE = 16
     NUM_WORKERS = 2
-    N_FOLDS = 3
-    EPOCHS = 8
+    N_FOLDS = 2
+    EPOCHS = 6
     PATIENCE = 2
     WARMUP_EPOCHS = 1
     BACKBONE_LR = 1e-4
