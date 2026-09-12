@@ -48,13 +48,13 @@ class Config:
         "Synovitis", "Baker's", "Contusion", "Fracture"
     ]
     IMAGE_SIZE = (224, 224)
-    NUM_SLICES = 3
-    MAX_SERIES = 2
-    BATCH_SIZE = 16
+    NUM_SLICES = 6
+    MAX_SERIES = 3
+    BATCH_SIZE = 8
     NUM_WORKERS = min(4, os.cpu_count() or 1)
-    N_FOLDS = 2
-    EPOCHS = 6
-    PATIENCE = 2
+    N_FOLDS = 3
+    EPOCHS = 12
+    PATIENCE = 4
     WARMUP_EPOCHS = 1
     BACKBONE_LR = 1e-4
     HEAD_LR = 1e-3
@@ -314,6 +314,9 @@ def train_fold(train_frame, valid_frame, series_df, fold, deadline):
         {"params": model.backbone.parameters(), "lr": Config.BACKBONE_LR},
         {"params": list(model.attention.parameters()) + list(model.head.parameters()), "lr": Config.HEAD_LR},
     ], weight_decay=Config.WEIGHT_DECAY)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=max(Config.EPOCHS - Config.WARMUP_EPOCHS, 1), eta_min=1e-6
+    )
     scaler = torch.cuda.amp.GradScaler(enabled=Config.AMP)
     best_auc, stale = 0.0, 0
     path = os.path.join(Config.OUTPUT_DIR, f"model_fold_{fold}.pth")
@@ -354,11 +357,15 @@ def train_fold(train_frame, valid_frame, series_df, fold, deadline):
             stale += 1
             if stale >= Config.PATIENCE:
                 break
+        if epoch + 1 >= Config.WARMUP_EPOCHS:
+            scheduler.step()
     return best_auc
 
 
 def train_all(train_frame, series_df):
     os.makedirs(Config.OUTPUT_DIR, exist_ok=True)
+    for path in glob.glob(os.path.join(Config.OUTPUT_DIR, "model_fold_*.pth")):
+        os.remove(path)
     deadline = time.monotonic() + Config.MAX_RUNTIME - Config.INFERENCE_RESERVE
     splitter = KFold(Config.N_FOLDS, shuffle=True, random_state=42)
     fold_scores = {}
