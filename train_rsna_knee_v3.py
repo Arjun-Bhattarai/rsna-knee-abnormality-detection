@@ -51,7 +51,7 @@ class Config:
     NUM_SLICES = 3
     MAX_SERIES = 2
     BATCH_SIZE = 16
-    NUM_WORKERS = 2
+    NUM_WORKERS = min(4, os.cpu_count() or 1)
     N_FOLDS = 2
     EPOCHS = 6
     PATIENCE = 2
@@ -64,7 +64,7 @@ class Config:
     PRETRAINED = True
     MASK_MISSING = True
     MAX_RUNTIME = 8 * 60 * 60
-    INFERENCE_RESERVE = 30 * 60
+    INFERENCE_RESERVE = 20 * 60
 
 
 def seed_everything(seed=42):
@@ -169,15 +169,25 @@ def choose_series(series_ids, series_df):
     metadata = series_df[series_df.SeriesInstanceUID.isin(series_ids)].copy()
     if metadata.empty:
         return sorted(series_ids)[:Config.MAX_SERIES]
+    metadata = metadata.set_index("SeriesInstanceUID", drop=False)
     selected = []
     for plane in ("sagittal", "coronal", "axial"):
-        candidates = metadata[metadata.get("Anatomical_Plane", "").astype(str).str.lower() == plane]
-        if not candidates.empty:
-            row = candidates.iloc[0]
-            selected.append(row.SeriesInstanceUID)
+        candidates = [series_id for series_id in series_ids if series_id in metadata.index
+                      and str(metadata.loc[series_id].get("Anatomical_Plane", "")).lower() == plane]
+        candidates.sort(key=lambda series_id: (
+            -int(metadata.loc[series_id].get("Fluid_Sensitive", 0) == 1),
+            -int(metadata.loc[series_id].get("Fat_Suppression", 0) == 1),
+        ))
+        if candidates:
+            selected.append(candidates[0])
             if len(selected) == Config.MAX_SERIES:
                 return selected
-    for series_id in series_ids:
+    remaining = [series_id for series_id in series_ids if series_id not in selected]
+    remaining.sort(key=lambda series_id: (
+        -int(series_id in metadata.index and metadata.loc[series_id].get("Fluid_Sensitive", 0) == 1),
+        -int(series_id in metadata.index and metadata.loc[series_id].get("Fat_Suppression", 0) == 1),
+    ))
+    for series_id in remaining:
         if series_id not in selected:
             selected.append(series_id)
         if len(selected) == Config.MAX_SERIES:
@@ -275,10 +285,23 @@ def auc_score(targets, predictions):
     return float(np.mean(scores)) if scores else 0.5
 
 
+def predict_with_tta(model, images):
+    original = torch.sigmoid(model(images))
+    flipped = torch.sigmoid(model(torch.flip(images, dims=[-1])))
+    return ((original + flipped) * 0.5).cpu().numpy()
+
+
 def loaders(train_frame, valid_frame, series_df):
     train = KneeDataset(train_frame, series_df, Config.TRAIN_SERIES_DIR, True)
     valid = KneeDataset(valid_frame, series_df, Config.TRAIN_SERIES_DIR, False)
-    kwargs = dict(batch_size=Config.BATCH_SIZE, num_workers=Config.NUM_WORKERS, pin_memory=True)
+    kwargs = dict(
+        batch_size=Config.BATCH_SIZE,
+        num_workers=Config.NUM_WORKERS,
+        pin_memory=Config.DEVICE == "cuda",
+        persistent_workers=Config.NUM_WORKERS > 0,
+    )
+    if Config.NUM_WORKERS > 0:
+        kwargs["prefetch_factor"] = 2
     return (DataLoader(train, shuffle=True, drop_last=True, **kwargs),
             DataLoader(valid, shuffle=False, **kwargs))
 
@@ -300,7 +323,9 @@ def train_fold(train_frame, valid_frame, series_df, fold, deadline):
             break
         model.train()
         for images, labels, mask, _ in train_loader:
-            images, labels, mask = images.to(Config.DEVICE), labels.to(Config.DEVICE), mask.to(Config.DEVICE)
+            images = images.to(Config.DEVICE, non_blocking=True)
+            labels = labels.to(Config.DEVICE, non_blocking=True)
+            mask = mask.to(Config.DEVICE, non_blocking=True)
             optimizer.zero_grad(set_to_none=True)
             with torch.cuda.amp.autocast(enabled=Config.AMP):
                 loss_values = criterion(model(images), labels)
@@ -315,8 +340,8 @@ def train_fold(train_frame, valid_frame, series_df, fold, deadline):
         targets, predictions = [], []
         with torch.no_grad():
             for images, labels, mask, _ in valid_loader:
-                logits = model(images.to(Config.DEVICE))
-                predictions.append(torch.sigmoid(logits).cpu().numpy())
+                predictions.append(predict_with_tta(
+                    model, images.to(Config.DEVICE, non_blocking=True)))
                 current = labels.numpy().copy()
                 current[mask.numpy() == 0] = np.nan
                 targets.append(current)
@@ -352,7 +377,16 @@ def generate_submission(test_frame, series_df):
     if not paths:
         raise RuntimeError("No trained model checkpoints were produced.")
     dataset = KneeDataset(test_frame, series_df, Config.TEST_SERIES_DIR, False)
-    loader = DataLoader(dataset, batch_size=Config.BATCH_SIZE, shuffle=False, num_workers=Config.NUM_WORKERS)
+    loader_kwargs = dict(
+        batch_size=Config.BATCH_SIZE,
+        shuffle=False,
+        num_workers=Config.NUM_WORKERS,
+        pin_memory=Config.DEVICE == "cuda",
+        persistent_workers=Config.NUM_WORKERS > 0,
+    )
+    if Config.NUM_WORKERS > 0:
+        loader_kwargs["prefetch_factor"] = 2
+    loader = DataLoader(dataset, **loader_kwargs)
     predictions = np.zeros((len(test_frame), len(Config.TARGETS)), dtype=np.float32)
     total_weight = 0.0
     with open(os.path.join(Config.OUTPUT_DIR, "fold_aucs.json")) as handle:
@@ -365,7 +399,8 @@ def generate_submission(test_frame, series_df):
         output = []
         with torch.no_grad():
             for images, _, _, _ in loader:
-                output.append(torch.sigmoid(model(images.to(Config.DEVICE))).cpu().numpy())
+                output.append(predict_with_tta(
+                    model, images.to(Config.DEVICE, non_blocking=True)))
         weight = max(scores.get(fold, 0.5), 0.05)
         predictions += np.vstack(output) * weight
         total_weight += weight
