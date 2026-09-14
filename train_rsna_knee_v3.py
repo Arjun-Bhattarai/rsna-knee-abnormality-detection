@@ -50,9 +50,9 @@ class Config:
     MAX_SERIES = 3
     BATCH_SIZE = 8
     NUM_WORKERS = min(4, os.cpu_count() or 1)
-    N_FOLDS = 3
-    EPOCHS = 9
-    PATIENCE = 3
+    N_FOLDS = 2
+    EPOCHS = 12
+    PATIENCE = 4
     WARMUP_EPOCHS = 1
     BACKBONE_LR = 3e-5
     HEAD_LR = 8e-4
