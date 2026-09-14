@@ -51,7 +51,7 @@ class Config:
     BATCH_SIZE = 8
     NUM_WORKERS = min(4, os.cpu_count() or 1)
     N_FOLDS = 3
-    EPOCHS = 10
+    EPOCHS = 9
     PATIENCE = 3
     WARMUP_EPOCHS = 1
     BACKBONE_LR = 3e-5
@@ -231,11 +231,11 @@ def preload_stacks(study_ids, study_series, series_df, base_dir):
                     for item in os.listdir(directory)
                     if item.lower().endswith(".dcm")
                 ]
-                cache[(study_id, series_id)] = make_stack(sort_dicom_files(files))
+                cache[(study_id, series_id)] = sort_dicom_files(files)
             else:
-                cache[(study_id, series_id)] = make_stack([])
+                cache[(study_id, series_id)] = []
         if number % 25 == 0 or number == total:
-            print(f"Preloaded {number}/{total} studies", flush=True)
+            print(f"Indexed {number}/{total} studies", flush=True)
     return cache
 
 
@@ -270,6 +270,8 @@ class KneeDataset(Dataset):
             stack = self.stack_cache.get((study_id, series_id))
             if stack is None:
                 stack = make_stack([])
+            elif isinstance(stack, list):
+                stack = make_stack(stack)
             stacks.append(augment(stack) if self.training else stack)
         while len(stacks) < Config.MAX_SERIES:
             stacks.append(torch.zeros(
