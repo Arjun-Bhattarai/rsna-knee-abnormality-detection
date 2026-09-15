@@ -1,5 +1,4 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
+
 """
 train_rsna_knee_v4.py
 RSNA Knee Abnormality Detection (2026) -- weak-supervision pipeline.
@@ -51,9 +50,7 @@ from sklearn.metrics import roc_auc_score
 warnings.filterwarnings("ignore")
 
 
-# =====================================================================
 # CONFIG
-# =====================================================================
 class CFG:
     INPUT_DIR = "/kaggle/input/rsna-knee-abnormality-detection"
     ALT_INPUT_DIR = "/kaggle/input/competitions/rsna-knee-abnormality-detection"
@@ -166,9 +163,7 @@ def seed_everything(seed=42):
         torch.set_float32_matmul_precision("high")
 
 
-# =====================================================================
 # 1. MULTILINGUAL REPORT LABELLER
-# =====================================================================
 # English is only ~39% of the reports. The lexicon below leans on the fact
 # that MSK anatomy is overwhelmingly Latin/Greek-derived, so one substring
 # often covers several languages (menisc- -> meniscus/menisco/menisque/
@@ -500,9 +495,7 @@ def build_weak_labels(train_df):
     return y, w, stats
 
 
-# =====================================================================
 # 2. SERIES SELECTION
-# =====================================================================
 def _col(df, name):
     """Case-insensitive column lookup."""
     for c in df.columns:
@@ -550,9 +543,7 @@ def build_series_plan(series_df):
     return plan
 
 
-# =====================================================================
 # 3. DICOM READING -> uint8 CACHE (decoded exactly once)
-# =====================================================================
 HEADER_TAGS = [
     "ImagePositionPatient", "ImageOrientationPatient", "InstanceNumber",
     "ImageLaterality", "Laterality", "SeriesDescription",
@@ -747,9 +738,7 @@ def build_cache(study_ids, plan, base_dir, tag, deadline):
     return memmap_path, present, kept
 
 
-# =====================================================================
 # 4. DATASET
-# =====================================================================
 IMAGENET_MEAN = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
 IMAGENET_STD = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
 
@@ -802,9 +791,7 @@ class KneeCacheDataset(Dataset):
         return x, y, w, present, row
 
 
-# =====================================================================
 # 5. GPU AUGMENTATION  (NO horizontal flip -- it swaps medial/lateral)
-# =====================================================================
 def gpu_augment(x, present):
     """x: (B, V, S, 3, H, W) already on device."""
     B, V, S, C, H, W = x.shape
@@ -853,9 +840,7 @@ def gpu_augment(x, present):
     return x, keep
 
 
-# =====================================================================
 # 6. MODEL
-# =====================================================================
 def pretrained_path():
     name = os.path.basename(models.EfficientNet_B0_Weights.DEFAULT.url)
     cache = os.path.expanduser("~/.cache/torch/hub/checkpoints")
@@ -985,9 +970,7 @@ class EMA:
             state[k].copy_(v)
 
 
-# =====================================================================
 # 7. LOSS & METRIC
-# =====================================================================
 def soft_bce(logits, targets, weights, pos_weight):
     """
     Weighted BCE against SOFT targets. Positive emphasis is folded into the
@@ -1017,9 +1000,7 @@ def macro_auc(targets, predictions, return_per_label=False):
     return (value, per_label) if return_per_label else value
 
 
-# =====================================================================
 # 8. TRAINING
-# =====================================================================
 def make_loader(dataset, shuffle, drop_last=False):
     kwargs = dict(
         batch_size=CFG.BATCH_SIZE,
@@ -1189,9 +1170,7 @@ def train_one_run(run, memmap_path, n_rows, train_rows, weak_val_rows,
     return best_gate, best_detail
 
 
-# =====================================================================
 # 9. INFERENCE
-# =====================================================================
 def generate_submission(test_df, test_series_df, gates, deadline):
     plan = build_series_plan(test_series_df)
     study_ids = test_df["StudyInstanceUID"].astype(str).tolist()
@@ -1237,9 +1216,7 @@ def generate_submission(test_df, test_series_df, gates, deadline):
     return submission
 
 
-# =====================================================================
 # 10. MAIN
-# =====================================================================
 def parse_args():
     parser = argparse.ArgumentParser(description="RSNA knee abnormality weak-label training run")
     parser.add_argument("--debug-max-studies", type=int, default=None)
