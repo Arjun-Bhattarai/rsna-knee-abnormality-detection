@@ -110,7 +110,8 @@ class CFG:
     NEG_WEIGHT_W = 0.90       # ... explicit negation
     UNMENTIONED_W = 0.35      # ... silence (treated as probably-absent)
     AMBIGUOUS_W = 0.05        # finding present but side not stated
-    GOLD_IN_TRAIN = False     # keep all 58 gold studies as a clean gate
+    GOLD_IN_TRAIN = True      # trusted labels should contribute to the gradient
+    GOLD_WEIGHT = 4.0         # upweight gold labels relative to report-derived labels
 
     # --- training ---
     BATCH_SIZE = 8
@@ -1299,7 +1300,7 @@ def main():
     # gold studies override their weak labels (they are the real thing)
     if CFG.GOLD_IN_TRAIN:
         y[is_gold] = np.nan_to_num(gold_truth[is_gold], nan=0.0)
-        w[is_gold] = np.where(np.isnan(gold_truth[is_gold]), 0.0, 2.0)
+        w[is_gold] = np.where(np.isnan(gold_truth[is_gold]), 0.0, CFG.GOLD_WEIGHT)
 
     # --- one-pass image cache ---
     plan = build_series_plan(train_series)
@@ -1313,8 +1314,7 @@ def main():
     usable[kept] = True
 
     gold_rows = np.where(is_gold & usable)[0]
-    weak_rows = np.where((~is_gold) & usable)[0] if not CFG.GOLD_IN_TRAIN \
-        else np.where(usable)[0]
+    weak_rows = np.where((~is_gold) & usable)[0]
     log(f"Usable: {len(weak_rows)} weak-supervised, {len(gold_rows)} gold")
 
     if len(gold_rows) < 8:
@@ -1336,6 +1336,8 @@ def main():
         rng.shuffle(shuffled)
         cut = max(int(len(shuffled) * CFG.WEAK_HOLDOUT), 32)
         val_rows, tr_rows = shuffled[:cut], shuffled[cut:]
+        if CFG.GOLD_IN_TRAIN:
+            tr_rows = np.concatenate([tr_rows, gold_rows])
         log(f"Run {run}: train={len(tr_rows)} weak-val={len(val_rows)} "
             f"gold-gate={len(gold_rows)}")
         gate, detail = train_one_run(
