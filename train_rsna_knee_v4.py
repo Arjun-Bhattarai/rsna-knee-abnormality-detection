@@ -116,9 +116,9 @@ class CFG:
     BATCH_SIZE = 8
     ACCUM = 2                 # effective batch 16
     NUM_WORKERS = min(4, os.cpu_count() or 1)
-    N_RUNS = 4                # independent seeds/splits to ensemble
-    EPOCHS = 10
-    PATIENCE = 4
+    N_RUNS = 3                # enough diversity while leaving time for inference
+    EPOCHS = 8
+    PATIENCE = 2
     WARMUP_STEPS = 200
     MAX_RUNTIME_HOURS = 8.0
     BACKBONE_LR = 2e-4        # v3 used 3e-5: far too low for MRI transfer
@@ -135,7 +135,7 @@ class CFG:
 
     # --- time budget (seconds) ---
     TOTAL_BUDGET = 8 * 3600
-    TEST_RESERVE = 75 * 60    # cache-build + inference on the hidden test set
+    TEST_RESERVE = 2 * 60 * 60  # cache-build + inference + submission safety margin
 
     DEBUG_MAX_STUDIES = None  # set to e.g. 120 for a smoke test
 
@@ -1192,7 +1192,7 @@ def generate_submission(test_df, test_series_df, gates, deadline):
         run = int(re.search(r"run(\d+)", os.path.basename(path)).group(1))
         model = KneeModel(pretrained=False).to(CFG.DEVICE)
         model.load_state_dict(torch.load(path, map_location=CFG.DEVICE))
-        predictions, rows = infer(model, loader, tta=True)
+        predictions, rows = infer(model, loader, tta=False)
         ordered = np.zeros_like(predictions)
         ordered[rows] = predictions
         # rank-average: AUC only cares about ordering, and ranks fuse better
@@ -1231,9 +1231,10 @@ def parse_args():
 def main():
     args = parse_args()
     CFG.DEVICE = args.device.lower()
-    CFG.N_RUNS = max(1, min(args.runs, 4))
+    CFG.N_RUNS = max(1, min(args.runs, 3))
     CFG.EPOCHS = max(1, args.epochs)
     CFG.MAX_RUNTIME_HOURS = max(1.0, args.budget_hours)
+    CFG.TOTAL_BUDGET = int(CFG.MAX_RUNTIME_HOURS * 3600)
     CFG.DEBUG_MAX_STUDIES = args.debug_max_studies
 
     if CFG.DEVICE == "cpu":
@@ -1300,6 +1301,8 @@ def main():
         CFG.GATE_GOLD_WEIGHT = 0.0
 
     train_deadline = START_TIME + CFG.TOTAL_BUDGET - CFG.TEST_RESERVE
+    if train_deadline <= time.monotonic():
+        raise RuntimeError("No training time remains after the test reserve.")
     gates, details = {}, {}
 
     for run in range(CFG.N_RUNS):
@@ -1339,7 +1342,7 @@ def main():
         pass
 
     generate_submission(test_df, test_series, gates,
-                        START_TIME + CFG.TOTAL_BUDGET - 8 * 60)
+                        START_TIME + CFG.TOTAL_BUDGET - 5 * 60)
     log("Done.")
 
 
