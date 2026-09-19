@@ -709,6 +709,23 @@ def build_cache(study_ids, plan, base_dir, tag, deadline):
     present = np.zeros((n, CFG.N_VIEWS), dtype=np.uint8)
     done = 0
     failures = 0
+
+    # Do not fork after CUDA has been initialized by training. The test set is
+    # small, so serial decoding is both reliable and fast enough here.
+    if tag == "test" or n <= CFG.NUM_WORKERS:
+        for job in jobs:
+            idx, pres, fail = _build_one(job)
+            present[idx] = pres
+            failures += fail
+            done += 1
+            log(f"  cached {done}/{n} studies ({failures} slice decode failures)")
+        kept = [i for i in range(n) if present[i].sum() > 0]
+        log(f"{tag} cache ready: {len(kept)}/{n} studies have at least one usable plane")
+        if failures > 0:
+            log(f"NOTE: {failures} slices failed to decode. If this number is large, "
+                f"attach the pylibjpeg / gdcm wheels so compressed transfer syntaxes decode.")
+        return memmap_path, present, kept
+
     workers = max(1, CFG.NUM_WORKERS)
 
     pool = ProcessPoolExecutor(max_workers=workers)
@@ -1001,16 +1018,18 @@ def macro_auc(targets, predictions, return_per_label=False):
 
 
 # 8. TRAINING
-def make_loader(dataset, shuffle, drop_last=False):
+def make_loader(dataset, shuffle, drop_last=False, num_workers=None):
+    if num_workers is None:
+        num_workers = CFG.NUM_WORKERS
     kwargs = dict(
         batch_size=CFG.BATCH_SIZE,
-        num_workers=CFG.NUM_WORKERS,
+        num_workers=num_workers,
         pin_memory=CFG.DEVICE == "cuda",
-        persistent_workers=CFG.NUM_WORKERS > 0,
+        persistent_workers=num_workers > 0,
         shuffle=shuffle,
         drop_last=drop_last,
     )
-    if CFG.NUM_WORKERS > 0:
+    if num_workers > 0:
         kwargs["prefetch_factor"] = 4
     return DataLoader(dataset, **kwargs)
 
@@ -1174,13 +1193,15 @@ def train_one_run(run, memmap_path, n_rows, train_rows, weak_val_rows,
 def generate_submission(test_df, test_series_df, gates, deadline):
     plan = build_series_plan(test_series_df)
     study_ids = test_df["StudyInstanceUID"].astype(str).tolist()
+    log(f"Building test cache for {len(study_ids)} studies")
     memmap_path, present, kept = build_cache(
         study_ids, plan, CFG.TEST_SERIES_DIR, "test", deadline)
+    log("Test cache ready; starting submission inference")
 
     n = len(study_ids)
     dataset = KneeCacheDataset(memmap_path, n, list(range(n)), None, None,
                                present, False)
-    loader = make_loader(dataset, shuffle=False)
+    loader = make_loader(dataset, shuffle=False, num_workers=0)
 
     checkpoints = sorted(glob.glob(os.path.join(CFG.OUTPUT_DIR, "model_run*.pth")))
     if not checkpoints:
@@ -1190,6 +1211,7 @@ def generate_submission(test_df, test_series_df, gates, deadline):
     total_weight = 0.0
     for path in checkpoints:
         run = int(re.search(r"run(\d+)", os.path.basename(path)).group(1))
+        log(f"Inferring checkpoint {run + 1}/{len(checkpoints)}")
         model = KneeModel(pretrained=False).to(CFG.DEVICE)
         model.load_state_dict(torch.load(path, map_location=CFG.DEVICE))
         predictions, rows = infer(model, loader, tta=False)
