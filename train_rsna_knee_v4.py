@@ -111,7 +111,7 @@ class CFG:
     UNMENTIONED_W = 0.35      # ... silence (treated as probably-absent)
     AMBIGUOUS_W = 0.05        # finding present but side not stated
     GOLD_IN_TRAIN = True      # trusted labels should contribute to the gradient
-    GOLD_WEIGHT = 4.0         # upweight gold labels relative to report-derived labels
+    GOLD_WEIGHT = 2.0         # trust gold labels without overfitting the 58-study set
 
     # --- training ---
     BATCH_SIZE = 8
@@ -128,7 +128,7 @@ class CFG:
     EMA_DECAY = 0.997
     LABEL_POS_WEIGHT_CAP = 6.0
     WEAK_HOLDOUT = 0.10
-    GATE_GOLD_WEIGHT = 0.5    # blend of gold-58 AUC and weak-holdout AUC
+    GATE_GOLD_WEIGHT = 0.25   # favor the larger weak holdout for checkpoint selection
 
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
     AMP = DEVICE == "cuda"
@@ -1218,10 +1218,9 @@ def generate_submission(test_df, test_series_df, gates, deadline):
         predictions, rows = infer(model, loader, tta=False)
         ordered = np.zeros_like(predictions)
         ordered[rows] = predictions
-        # rank-average: AUC only cares about ordering, and ranks fuse better
-        # than raw probabilities across independently-trained runs
-        ranks = np.apply_along_axis(
-            lambda c: pd.Series(c).rank(pct=True).to_numpy(), 0, ordered)
+        # Preserve calibrated probabilities; rank averaging is too coarse when
+        # the test set contains only a few studies.
+        ranks = ordered
         weight = max(gates.get(run, 0.5) - 0.45, 0.02)
         accumulator += ranks * weight
         total_weight += weight
