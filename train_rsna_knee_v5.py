@@ -559,7 +559,7 @@ def build_series_plan(series_df, base_dir=None):
                 count = int(row[count_col]) if count_col and not pd.isna(row[count_col]) else 0
                 if count == 0 and base_dir is not None and series_col is not None:
                     series_dir = os.path.join(
-                        base_dir, str(group.name), str(row[series_col])
+                        base_dir, str(study_id), str(row[series_col])
                     )
                     try:
                         count = sum(
