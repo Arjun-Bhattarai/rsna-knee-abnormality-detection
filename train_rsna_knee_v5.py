@@ -1,6 +1,6 @@
 
 """
-train_rsna_knee_v4.py
+train_rsna_knee_v5.py
 RSNA Knee Abnormality Detection (2026) -- weak-supervision pipeline.
 
 WHY THIS IS DIFFERENT FROM v2/v3
@@ -23,6 +23,19 @@ v4:
      checkpoint-selection gate, blended with a weak-holdout gate.
 
 Runtime target: < 8 h on a single Kaggle T4/P100. Internet off.
+
+v5 changes from v4:
+  1. Held-out gold folds: each run trains on most expert-labeled studies and
+      evaluates its checkpoint on a separate gold fold.
+  2. Safer report clauses: targeted comma splitting prevents negation from
+      crossing between separate findings; a duplicated Effusion anchor is gone.
+  3. Faster and safer caching: larger hidden test sets use spawned workers after
+      CUDA training, and cache data is flushed once instead of per study.
+  4. Series selection uses actual DICOM file counts when metadata lacks counts.
+  5. Normalized cutout uses the correct black-image value instead of zero.
+  6. Trailing gradient accumulation is applied instead of discarded.
+  7. The validated three-run ensemble, offline weights, runtime budget, and
+      deterministic DataLoader/CUDA settings are retained.
 """
 
 import os
@@ -31,6 +44,7 @@ import re
 import glob
 import json
 import math
+import multiprocessing
 import time
 import random
 import unicodedata
@@ -275,7 +289,7 @@ ANCHORS = {
         "gelenkerguss", "erguss", "hydrops", "versamento", "gewrichtsvocht",
         "eklem sivisi", "eklem efuzyon", "wysiek", "\u95a2\u7bc0\u6db2",
         "\u6ea2\u6db2", "\u5173\u8282\u79ef\u6db2",
-        "\u0432\u044b\u043f\u043e\u0442", "\u0441\u0438\u043d\u043e\u0432\u0438\u0442",
+        "\u0432\u044b\u043f\u043e\u0442",
     ],
     "Synovitis": [
         "synovitis", "synovite", "sinovitis", "sinovite", "synovialitis",
@@ -335,7 +349,12 @@ PAIR_ANCHORS = {
 # Findings whose anchor already implies the abnormality (no TEAR/DEGEN needed).
 SELF_EVIDENT = {"Effusion", "Synovitis", "Baker's", "Contusion", "Fracture"}
 
-CLAUSE_SPLIT = re.compile(r"[.;:\n\r\u3002\uff1b\u2022]|(?<=\s)-\s")
+CLAUSE_SPLIT = re.compile(
+    r"[.;:\n\r\u3002\uff1b\u2022]|(?<=\s)-\s|,\s+(?="
+    r"(?:no|not|without|absence|absent|negative|intact|normal|preserved|"
+    r"medial|lateral|right|left|acl|mcl|menisc|effusion|synov|fracture|"
+    r"contusion|baker|patell|cartil))"
+)
 
 
 def _hit(text, terms):
@@ -508,7 +527,7 @@ def _col(df, name):
     return None
 
 
-def build_series_plan(series_df):
+def build_series_plan(series_df, base_dir=None):
     """
     study_id -> {plane_index: series_id}. One series per anatomical plane,
     preferring fluid-sensitive + fat-suppressed acquisitions, then slice count.
@@ -538,6 +557,17 @@ def build_series_plan(series_df):
                 fluid = int(row[fluid_col] == 1) if fluid_col else 0
                 fat = int(row[fat_col] == 1) if fat_col else 0
                 count = int(row[count_col]) if count_col and not pd.isna(row[count_col]) else 0
+                if count == 0 and base_dir is not None and series_col is not None:
+                    series_dir = os.path.join(
+                        base_dir, str(group.name), str(row[series_col])
+                    )
+                    try:
+                        count = sum(
+                            name.lower().endswith(".dcm")
+                            for name in os.listdir(series_dir)
+                        )
+                    except OSError:
+                        count = 0
                 return (-fluid, -fat, -count, str(row[series_col]))
 
             best = sorted((r for _, r in cand.iterrows()), key=rank)[0]
@@ -685,7 +715,6 @@ def _build_one(args):
             cache[row_index, plane_index, d] = img
         present[plane_index] = 1
 
-    cache.flush()
     del cache
     return row_index, present, failures
 
@@ -714,15 +743,23 @@ def build_cache(study_ids, plan, base_dir, tag, deadline):
     done = 0
     failures = 0
 
-    # Do not fork after CUDA has been initialized by training. The test set is
-    # small, so serial decoding is both reliable and fast enough here.
-    if tag == "test" or n <= CFG.NUM_WORKERS:
+    # Do not fork after CUDA has been initialized by training. Spawn workers
+    # for larger hidden test sets; tiny local tests stay serial.
+    if tag == "test" and n > CFG.NUM_WORKERS:
+        pool_context = multiprocessing.get_context("spawn")
+    else:
+        pool_context = None
+
+    if n <= CFG.NUM_WORKERS:
         for job in jobs:
             idx, pres, fail = _build_one(job)
             present[idx] = pres
             failures += fail
             done += 1
             log(f"  cached {done}/{n} studies ({failures} slice decode failures)")
+        cache = np.memmap(memmap_path, dtype=np.uint8, mode="r+", shape=shape)
+        cache.flush()
+        del cache
         kept = [i for i in range(n) if present[i].sum() > 0]
         log(f"{tag} cache ready: {len(kept)}/{n} studies have at least one usable plane")
         if failures > 0:
@@ -732,7 +769,10 @@ def build_cache(study_ids, plan, base_dir, tag, deadline):
 
     workers = max(1, CFG.NUM_WORKERS)
 
-    pool = ProcessPoolExecutor(max_workers=workers)
+    pool_kwargs = {"max_workers": workers}
+    if pool_context is not None:
+        pool_kwargs["mp_context"] = pool_context
+    pool = ProcessPoolExecutor(**pool_kwargs)
     try:
         futures = {pool.submit(_build_one, j): j[0] for j in jobs}
         for future in as_completed(futures):
@@ -749,7 +789,10 @@ def build_cache(study_ids, plan, base_dir, tag, deadline):
                 log("  cache deadline hit -- dropping the remaining studies")
                 break
     finally:
-        pool.shutdown(wait=False, cancel_futures=True)
+        pool.shutdown(wait=True, cancel_futures=True)
+        cache = np.memmap(memmap_path, dtype=np.uint8, mode="r+", shape=shape)
+        cache.flush()
+        del cache
 
     kept = [i for i in range(n) if present[i].sum() > 0]
     log(f"{tag} cache ready: {len(kept)}/{n} studies have at least one usable plane")
@@ -846,7 +889,8 @@ def gpu_augment(x, present):
         side = int(H * random.uniform(0.10, 0.25))
         top = random.randint(0, H - side)
         left = random.randint(0, W - side)
-        flat[:, :, top:top + side, left:left + side] = 0.0
+        cutout_value = (-IMAGENET_MEAN / IMAGENET_STD).to(device)
+        flat[:, :, top:top + side, left:left + side] = cutout_value
 
     x = flat.reshape(B, V, S, C, H, W)
 
@@ -1084,12 +1128,14 @@ def infer(model, loader, tta=False):
 
 
 def train_one_run(run, memmap_path, n_rows, train_rows, weak_val_rows,
-                  gold_rows, y, w, present, gold_truth, deadline):
+                  gold_eval_rows, y, w, present, gold_truth, deadline):
     seed_everything(CFG.SEED + run * 101)
 
     train_ds = KneeCacheDataset(memmap_path, n_rows, train_rows, y, w, present, True)
     weak_ds = KneeCacheDataset(memmap_path, n_rows, weak_val_rows, y, w, present, False)
-    gold_ds = KneeCacheDataset(memmap_path, n_rows, gold_rows, y, w, present, False)
+    gold_ds = KneeCacheDataset(
+        memmap_path, n_rows, gold_eval_rows, y, w, present, False
+    )
 
     train_loader = make_loader(
         train_ds, shuffle=True, drop_last=True, seed=CFG.SEED + run * 101
@@ -1175,6 +1221,20 @@ def train_one_run(run, memmap_path, n_rows, train_rows, weak_val_rows,
             if time.monotonic() > deadline:
                 break
 
+        if seen and seen % CFG.ACCUM != 0:
+            if scaler is not None:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
+                optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+            scheduler.step()
+            ema.update(model)
+            step += 1
+
         backup = ema.copy_to(model)
         gold_pred, gold_idx = infer(model, gold_loader, tta=False)
         weak_pred, weak_idx = infer(model, weak_loader, tta=False)
@@ -1208,7 +1268,7 @@ def train_one_run(run, memmap_path, n_rows, train_rows, weak_val_rows,
 
 # 9. INFERENCE
 def generate_submission(test_df, test_series_df, gates, deadline):
-    plan = build_series_plan(test_series_df)
+    plan = build_series_plan(test_series_df, CFG.TEST_SERIES_DIR)
     study_ids = test_df["StudyInstanceUID"].astype(str).tolist()
     log(f"Building test cache for {len(study_ids)} studies")
     memmap_path, present, kept = build_cache(
@@ -1318,7 +1378,7 @@ def main():
         w[is_gold] = np.where(np.isnan(gold_truth[is_gold]), 0.0, CFG.GOLD_WEIGHT)
 
     # --- one-pass image cache ---
-    plan = build_series_plan(train_series)
+    plan = build_series_plan(train_series, CFG.TRAIN_SERIES_DIR)
     study_ids = train_df["StudyInstanceUID"].tolist()
     cache_deadline = time.monotonic() + 60 * 60   # 1 h, then train with what we have
     memmap_path, present, kept = build_cache(
@@ -1341,6 +1401,8 @@ def main():
     if train_deadline <= time.monotonic():
         raise RuntimeError("No training time remains after the test reserve.")
     gates, details = {}, {}
+    gold_order = np.random.RandomState(CFG.SEED + 999).permutation(gold_rows)
+    gold_folds = np.array_split(gold_order, CFG.N_RUNS)
 
     for run in range(CFG.N_RUNS):
         if time.monotonic() > train_deadline:
@@ -1351,12 +1413,17 @@ def main():
         rng.shuffle(shuffled)
         cut = max(int(len(shuffled) * CFG.WEAK_HOLDOUT), 32)
         val_rows, tr_rows = shuffled[:cut], shuffled[cut:]
+        gold_eval_rows = gold_folds[run % len(gold_folds)]
+        gold_train_rows = np.concatenate([
+            fold for fold_index, fold in enumerate(gold_folds)
+            if fold_index != run % len(gold_folds)
+        ])
         if CFG.GOLD_IN_TRAIN:
-            tr_rows = np.concatenate([tr_rows, gold_rows])
+            tr_rows = np.concatenate([tr_rows, gold_train_rows])
         log(f"Run {run}: train={len(tr_rows)} weak-val={len(val_rows)} "
-            f"gold-gate={len(gold_rows)}")
+            f"gold-gate={len(gold_eval_rows)}")
         gate, detail = train_one_run(
-            run, memmap_path, n_rows, tr_rows, val_rows, gold_rows,
+            run, memmap_path, n_rows, tr_rows, val_rows, gold_eval_rows,
             y, w, present, gold_truth, train_deadline)
         gates[run] = gate
         if detail is not None:
