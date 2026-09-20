@@ -4,9 +4,9 @@ A PyTorch research codebase for the RSNA Knee Abnormality Detection Kaggle compe
 
 ## Project Status
 
-This repository contains the training and experiment code for a Kaggle competition submission. The reusable dataset, preprocessing, model, loss, metric, and trainer components are implemented under `src/` and covered by tests under `tests/`. The current end-to-end training entry point is `train_rsna_knee_v2.py`, which is designed for an offline Kaggle submission environment.
+This repository contains the training and experiment code for a Kaggle competition submission. The reusable dataset, preprocessing, model, loss, metric, and trainer components are implemented under `src/` and covered by tests under `tests/`. The current end-to-end experimental entry point is `train_rsna_knee_v5.py`; `train_rsna_knee_v4.py` is retained as the previous baseline.
 
-The only auxiliary script currently retained is `scripts/check_folds.py`, which reports fold and label distributions from `data/train.csv`. The end-to-end training entry point remains `train_rsna_knee_v2.py`.
+The only auxiliary script currently retained is `scripts/check_folds.py`, which reports fold and label distributions from `data/train.csv`.
 
 ## Model Overview
 
@@ -101,6 +101,22 @@ The standalone script supports offline EfficientNet-B0 and ResNet-34 checkpoints
 The initial Kaggle submission from `arjun.ipynb` achieved an approximate score of **0.487**. This was below the random-prediction reference point of about 0.50 and indicated that the model was not learning useful signal. The main suspected cause was the scored notebook failing to download ImageNet pretrained weights because Kaggle execution has no internet access, then continuing with a randomly initialized backbone.
 
 The v2 training script addresses this by requiring pretrained weights to be staged locally before model creation. Do not treat the 0.487 result as a final benchmark for the corrected pipeline; record a new Kaggle score after running the offline-weight workflow.
+
+### Reported Kaggle Scores
+
+The following scores were reported from successive experiments. They are leaderboard results, not local validation AUC values.
+
+| Experiment stage | Reported score | Notes |
+| --- | ---: | --- |
+| Initial `arjun.ipynb` submission | 0.487 | Random or unavailable pretrained backbone suspected |
+| Early v4 weak-supervision pipeline | 0.644 | First weak-label and DICOM-cache version |
+| v4 with expert-label training | 0.742 | Gold studies added to training |
+| v4 gold-label weighting and ensemble update | 0.762 | Improved expert-label supervision |
+| v4 validated three-run probability ensemble | **0.763** | Best reported score |
+| Five-run logit ensemble experiment | 0.759 | Regression; reverted |
+| Repeated three-run experiment | 0.755 | Run-to-run leaderboard variance observed |
+
+Version 5 contains the latest label, validation, caching, and training-stability improvements. It has not yet received a separate Kaggle leaderboard score.
 
 ## Development Notes
 
