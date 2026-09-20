@@ -117,7 +117,7 @@ class CFG:
     BATCH_SIZE = 8
     ACCUM = 2                 # effective batch 16
     NUM_WORKERS = min(4, os.cpu_count() or 1)
-    N_RUNS = 3                # enough diversity while leaving time for inference
+    N_RUNS = 5                # reduce ensemble variance; still fits the runtime budget
     EPOCHS = 8
     PATIENCE = 2
     WARMUP_STEPS = 200
@@ -1218,11 +1218,14 @@ def generate_submission(test_df, test_series_df, gates, deadline):
         predictions, rows = infer(model, loader, tta=False)
         ordered = np.zeros_like(predictions)
         ordered[rows] = predictions
-        # Preserve calibrated probabilities; rank averaging is too coarse when
-        # the test set contains only a few studies.
-        ranks = ordered
+        # Average in logit space so confident predictions are not compressed
+        # before the independent checkpoints are combined.
+        ensemble_values = np.log(
+            np.clip(ordered, 1e-6, 1.0 - 1e-6)
+            / np.clip(1.0 - ordered, 1e-6, 1.0)
+        )
         weight = max(gates.get(run, 0.5) - 0.45, 0.02)
-        accumulator += ranks * weight
+        accumulator += ensemble_values * weight
         total_weight += weight
         del model
         gc.collect()
@@ -1230,6 +1233,7 @@ def generate_submission(test_df, test_series_df, gates, deadline):
             torch.cuda.empty_cache()
 
     accumulator /= max(total_weight, 1e-6)
+    accumulator = 1.0 / (1.0 + np.exp(-np.clip(accumulator, -30.0, 30.0)))
     submission = pd.DataFrame({"StudyInstanceUID": test_df["StudyInstanceUID"]})
     for j, target in enumerate(CFG.TARGETS):
         submission[target] = np.clip(accumulator[:, j], 1e-6, 1 - 1e-6)
@@ -1253,7 +1257,7 @@ def parse_args():
 def main():
     args = parse_args()
     CFG.DEVICE = args.device.lower()
-    CFG.N_RUNS = max(1, min(args.runs, 3))
+    CFG.N_RUNS = max(1, min(args.runs, 5))
     CFG.EPOCHS = max(1, args.epochs)
     CFG.MAX_RUNTIME_HOURS = max(1.0, args.budget_hours)
     CFG.TOTAL_BUDGET = int(CFG.MAX_RUNTIME_HOURS * 3600)
