@@ -38,6 +38,8 @@ import warnings
 import argparse
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+
 import numpy as np
 import pandas as pd
 import torch
@@ -158,7 +160,8 @@ def seed_everything(seed=42):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
-        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
         torch.set_float32_matmul_precision("high")
@@ -1019,7 +1022,13 @@ def macro_auc(targets, predictions, return_per_label=False):
 
 
 # 8. TRAINING
-def make_loader(dataset, shuffle, drop_last=False, num_workers=None):
+def seed_worker(worker_id):
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+
+
+def make_loader(dataset, shuffle, drop_last=False, num_workers=None, seed=None):
     if num_workers is None:
         num_workers = CFG.NUM_WORKERS
     kwargs = dict(
@@ -1029,7 +1038,12 @@ def make_loader(dataset, shuffle, drop_last=False, num_workers=None):
         persistent_workers=num_workers > 0,
         shuffle=shuffle,
         drop_last=drop_last,
+        worker_init_fn=seed_worker,
     )
+    if seed is not None:
+        generator = torch.Generator()
+        generator.manual_seed(seed)
+        kwargs["generator"] = generator
     if num_workers > 0:
         kwargs["prefetch_factor"] = 4
     return DataLoader(dataset, **kwargs)
@@ -1077,7 +1091,9 @@ def train_one_run(run, memmap_path, n_rows, train_rows, weak_val_rows,
     weak_ds = KneeCacheDataset(memmap_path, n_rows, weak_val_rows, y, w, present, False)
     gold_ds = KneeCacheDataset(memmap_path, n_rows, gold_rows, y, w, present, False)
 
-    train_loader = make_loader(train_ds, shuffle=True, drop_last=True)
+    train_loader = make_loader(
+        train_ds, shuffle=True, drop_last=True, seed=CFG.SEED + run * 101
+    )
     weak_loader = make_loader(weak_ds, shuffle=False)
     gold_loader = make_loader(gold_ds, shuffle=False)
 
