@@ -1235,7 +1235,7 @@ def generate_submission(test_df, test_series_df, gates, deadline):
         log(f"Inferring checkpoint {run + 1}/{len(checkpoints)}")
         model = KneeModel(pretrained=False).to(CFG.DEVICE)
         model.load_state_dict(torch.load(path, map_location=CFG.DEVICE))
-        predictions, rows = infer(model, loader, tta=False)
+        predictions, rows = infer(model, loader, tta=True)
         ordered = np.zeros_like(predictions)
         ordered[rows] = predictions
         # Preserve calibrated probabilities; rank averaging is too coarse when
