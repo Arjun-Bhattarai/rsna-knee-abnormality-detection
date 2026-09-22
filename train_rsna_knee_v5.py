@@ -105,7 +105,7 @@ class CFG:
     N_TARGETS = len(TARGETS)
 
     # --- imaging ---
-    IMAGE_SIZE = 224
+    IMAGE_SIZE = 256       # preserve more detail in menisci and small fractures
     NUM_SLICES = 8            # centre slices used by the model, per plane
     DEPTH = NUM_SLICES + 2    # planes stored per view (2.5D neighbours)
     PLANES = ("sagittal", "coronal", "axial")
@@ -122,7 +122,7 @@ class CFG:
     GOLD_WEIGHT = 2.0         # trust gold labels without overfitting the 58-study set
 
     # --- training ---
-    BATCH_SIZE = 8
+    BATCH_SIZE = 6         # keep GPU memory stable at the higher resolution
     ACCUM = 2                 # effective batch 16
     NUM_WORKERS = min(4, os.cpu_count() or 1)
     N_RUNS = 3                # enough diversity while leaving time for inference
