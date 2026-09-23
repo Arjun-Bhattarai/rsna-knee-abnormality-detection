@@ -60,15 +60,16 @@ warnings.filterwarnings("ignore")
 
 # CONFIG
 class CFG:
+    REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     INPUT_DIR = "/kaggle/input/rsna-knee-abnormality-detection"
     ALT_INPUT_DIR = "/kaggle/input/competitions/rsna-knee-abnormality-detection"
     if os.path.exists(ALT_INPUT_DIR):
         INPUT_DIR = ALT_INPUT_DIR
 
-    LOCAL_DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "data"))
+    LOCAL_DATA_DIR = os.path.join(REPO_ROOT, "data")
     if not os.path.exists(INPUT_DIR):
         if os.path.exists(LOCAL_DATA_DIR):
-            INPUT_DIR = os.path.abspath(os.path.dirname(__file__))
+            INPUT_DIR = REPO_ROOT
 
     TRAIN_CSV = os.path.join(INPUT_DIR, "train.csv")
     TEST_CSV = os.path.join(INPUT_DIR, "test.csv")
@@ -889,8 +890,8 @@ def pretrained_path():
 
     roots = CFG.WEIGHT_DIRS + [
         "/kaggle/input",
-        os.path.abspath(os.path.join(os.path.dirname(__file__), "weights")),
-        os.path.abspath(os.path.dirname(__file__)),
+        os.path.join(CFG.REPO_ROOT, "weights"),
+        CFG.REPO_ROOT,
         ".",
     ]
     seen = set()
