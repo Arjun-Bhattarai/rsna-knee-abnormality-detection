@@ -4,7 +4,7 @@ A PyTorch research codebase for the RSNA Knee Abnormality Detection Kaggle compe
 
 ## Project Status
 
-This repository contains the training and experiment code for a Kaggle competition submission. The reusable dataset, preprocessing, model, loss, metric, and trainer components are implemented under `src/` and covered by tests under `tests/`. The current end-to-end experimental entry point is `train_rsna_knee_v5.py`; `train_rsna_knee_v4.py` is retained as the previous baseline.
+This repository contains the training and experiment code for a Kaggle competition submission. The reusable dataset, preprocessing, model, loss, metric, and trainer components are implemented under `src/` and covered by tests under `tests/`. The versioned end-to-end experiment scripts under `experiments/` are retained so their changes can be compared.
 
 The only auxiliary script currently retained is `scripts/check_folds.py`, which reports fold and label distributions from `data/train.csv`.
 
@@ -31,8 +31,7 @@ src/
 	training/        losses and training loop
 	utils/           metrics and related helpers
 tests/             unit tests for the implemented modules
-train_rsna_knee_v2.py
-									 standalone offline/Kaggle training and inference script
+experiments/       versioned offline/Kaggle training and inference scripts
 data/              local CSV metadata included with this checkout
 weights/           location for local model weights
 outputs/           checkpoints and generated artifacts
@@ -85,12 +84,12 @@ The model tests use small fake backbones where possible, so the test suite does 
 
 ## Kaggle Training
 
-`train_rsna_knee_v2.py` is configured for the RSNA competition directory layout and automatically uses CUDA when available. Before a scored offline run:
+The versioned scripts in `experiments/` are configured for the RSNA competition directory layout and automatically use CUDA when available. Before a scored offline run:
 
 1. Attach the RSNA competition data to the notebook or execution environment.
 2. Attach a dataset containing the matching torchvision pretrained checkpoint.
 3. Add that dataset path to `Config.PRETRAINED_WEIGHTS_DIRS` if it is not one of the default search paths.
-4. Run the script in the Kaggle notebook or copy it into the submission notebook.
+4. Run the selected script from `experiments/` in the Kaggle notebook or copy it into the submission notebook.
 
 The script intentionally stops when pretrained weights cannot be found. This avoids silently training a randomly initialized backbone when internet access is disabled. It writes checkpoints and the final submission according to `Config.OUTPUT_DIR` and `Config.SUBMISSION_PATH`.
 
@@ -124,4 +123,4 @@ Version 5 contains the latest label, validation, caching, and training-stability
 - The modular dataset currently drops rows with missing target labels.
 - The training criterion and metric operate on the 12-target multi-label output.
 - Keep large DICOM datasets, checkpoints, and generated predictions outside version control.
-- `scripts/check_folds.py` is a diagnostic utility; training and inference use `train_rsna_knee_v2.py`.
+- `scripts/check_folds.py` is a diagnostic utility; compare the versioned training scripts before choosing the experiment to run.
