@@ -25,11 +25,14 @@ v4:
 Runtime target: < 8 h on a single Kaggle T4/P100. Internet off.
 
 v5 operational changes from the validated v4 recipe:
-    1. Keeps the validated weak-label parser, gold training weight, checkpoint
-         gate, three-run ensemble, and probability averaging unchanged.
-    2. Fixes the v5 series-plan crash by using explicit study IDs.
-    3. Avoids per-study cache flushes and uses a single flush after cache work.
-    4. Uses spawned workers for larger hidden test caches after CUDA training.
+    1. Keeps the validated weak-label parser, gold training weight, three-run
+        ensemble, and probability averaging unchanged.
+    2. Selects checkpoints using only the independent weak holdout; gold
+        studies are used for training and therefore cannot be a validation
+        gate without leaking labels.
+    3. Fixes the v5 series-plan crash by using explicit study IDs.
+    4. Avoids per-study cache flushes and uses a single flush after cache work.
+    5. Uses spawned workers for larger hidden test caches after CUDA training.
 """
 
 import os
@@ -137,7 +140,10 @@ class CFG:
     EMA_DECAY = 0.997
     LABEL_POS_WEIGHT_CAP = 6.0
     WEAK_HOLDOUT = 0.10
-    GATE_GOLD_WEIGHT = 0.25   # favor the larger weak holdout for checkpoint selection
+    # Gold studies are included in training, so their AUC is in-sample and
+    # must not influence checkpoint selection. Use the independent weak
+    # holdout as the selection signal instead.
+    GATE_GOLD_WEIGHT = 0.0
 
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
     AMP = DEVICE == "cuda"
