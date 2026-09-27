@@ -122,9 +122,9 @@ class CFG:
     ]
     N_TARGETS = len(TARGETS)
 
-    IMAGE_SIZE = 288
-    FALLBACK_IMAGE_SIZE = 256
-    NUM_SLICES = 12
+    IMAGE_SIZE = 256
+    FALLBACK_IMAGE_SIZE = 224
+    NUM_SLICES = 8
     DEPTH = NUM_SLICES + 2
     SLICE_LO = 0.06
     SLICE_HI = 0.94
@@ -135,29 +135,31 @@ class CFG:
     NEG_TARGET = 0.02
     POS_WEIGHT_W = 1.00
     NEG_WEIGHT_W = 0.90
-    UNMENTIONED_W = 0.00
-    AMBIGUOUS_W = 0.12
+    UNMENTIONED_W = 0.35
+    AMBIGUOUS_W = 0.05
     GOLD_IN_TRAIN = True
-    GOLD_WEIGHT = 1.6
+    GOLD_WEIGHT = 2.0
 
-    BATCH_SIZE = 4
-    ACCUM = 4
-    NUM_WORKERS = min(2, os.cpu_count() or 1)
+    BATCH_SIZE = 6
+    ACCUM = 2
+    NUM_WORKERS = min(4, os.cpu_count() or 1)
     N_RUNS = 3
     EPOCHS = 8
-    PATIENCE = 3
-    WARMUP_STEPS = 250
+    PATIENCE = 2
+    WARMUP_STEPS = 200
     MAX_RUNTIME_HOURS = 9.0
     BACKBONE = "b0"
     BACKBONE_LR = 2e-4
     HEAD_LR = 1e-3
     WEIGHT_DECAY = 1e-4
     EMA_DECAY = 0.997
-    LABEL_POS_WEIGHT_CAP = 5.0
-    WEAK_HOLDOUT = 0.08
+    LABEL_POS_WEIGHT_CAP = 6.0
+    WEAK_HOLDOUT = 0.10
     GATE_GOLD_WEIGHT = 0.0
     MIXUP_ALPHA = 0.25
-    MIL_BLEND = 0.35
+    # The global study head is the validated v5 path. A max over individual
+    # slices is too sensitive to one noisy slice and regressed the submission.
+    MIL_BLEND = 0.0
 
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
     AMP = DEVICE == "cuda"
@@ -1365,7 +1367,9 @@ def generate_submission(test_df, test_series_df, gates, deadline):
         log(f"Inferring checkpoint {run + 1}/{len(checkpoints)}")
         model = KneeModel(pretrained=False, backbone=CFG.BACKBONE).to(CFG.DEVICE)
         model.load_state_dict(torch.load(path, map_location=CFG.DEVICE), strict=False)
-        predictions, rows = infer(model, loader, tta=True)
+        # Small in-plane rotations are not label-preserving for MRI anatomy;
+        # v5's unaugmented probability inference was the stronger baseline.
+        predictions, rows = infer(model, loader, tta=False)
         ordered = np.zeros_like(predictions)
         ordered[rows] = predictions
         weight = max(gates.get(run, 0.5) - 0.45, 0.02)
