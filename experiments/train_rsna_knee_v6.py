@@ -122,9 +122,9 @@ class CFG:
     ]
     N_TARGETS = len(TARGETS)
 
-    IMAGE_SIZE = 256
+    IMAGE_SIZE = 288
     FALLBACK_IMAGE_SIZE = 224
-    NUM_SLICES = 8
+    NUM_SLICES = 12
     DEPTH = NUM_SLICES + 2
     SLICE_LO = 0.06
     SLICE_HI = 0.94
@@ -135,7 +135,7 @@ class CFG:
     NEG_TARGET = 0.02
     POS_WEIGHT_W = 1.00
     NEG_WEIGHT_W = 0.90
-    UNMENTIONED_W = 0.35
+    UNMENTIONED_W = 0.0
     AMBIGUOUS_W = 0.05
     GOLD_IN_TRAIN = True
     GOLD_WEIGHT = 2.0
