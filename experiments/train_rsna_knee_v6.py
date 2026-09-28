@@ -1420,6 +1420,9 @@ def main():
         CFG.IMAGE_SIZE = int(args.image_size)
     if args.batch_size:
         CFG.BATCH_SIZE = int(args.batch_size)
+    if CFG.IMAGE_SIZE >= 288 and args.batch_size is None:
+        CFG.BATCH_SIZE = 2
+        CFG.ACCUM = 6
     if CFG.BACKBONE == "b3":
         CFG.BATCH_SIZE = min(CFG.BATCH_SIZE, 3)
         CFG.ACCUM = max(CFG.ACCUM, 5)
