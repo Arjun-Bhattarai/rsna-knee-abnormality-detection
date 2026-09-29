@@ -155,7 +155,10 @@ class CFG:
     EMA_DECAY = 0.997
     LABEL_POS_WEIGHT_CAP = 6.0
     WEAK_HOLDOUT = 0.10
-    GATE_GOLD_WEIGHT = 0.0
+    # Select checkpoints by expert labels first. The expert validation rows
+    # are held out per run; weak validation is only a stabilizing secondary
+    # signal because it is derived from reports rather than adjudicated labels.
+    GATE_GOLD_WEIGHT = 0.75
     MIXUP_ALPHA = 0.25
     # The global study head is the validated v5 path. A max over individual
     # slices is too sensitive to one noisy slice and regressed the submission.
@@ -1222,12 +1225,13 @@ def infer(model, loader, tta=False):
 
 
 def train_one_run(run, memmap_path, n_rows, train_rows, weak_val_rows,
-                  gold_rows, y, w, present, gold_truth, deadline):
+                  gold_val_rows, y, w, present, gold_truth, deadline):
     seed_everything(CFG.SEED + run * 101)
 
     train_ds = KneeCacheDataset(memmap_path, n_rows, train_rows, y, w, present, True)
     weak_ds = KneeCacheDataset(memmap_path, n_rows, weak_val_rows, y, w, present, False)
-    gold_ds = KneeCacheDataset(memmap_path, n_rows, gold_rows, y, w, present, False)
+    gold_ds = KneeCacheDataset(
+        memmap_path, n_rows, gold_val_rows, y, w, present, False)
 
     train_loader = make_loader(train_ds, shuffle=True, drop_last=True)
     weak_loader = make_loader(weak_ds, shuffle=False)
@@ -1321,7 +1325,7 @@ def train_one_run(run, memmap_path, n_rows, train_rows, weak_val_rows,
         gate = CFG.GATE_GOLD_WEIGHT * gold_auc + (1 - CFG.GATE_GOLD_WEIGHT) * weak_auc
 
         log(f"  run {run} epoch {epoch + 1}/{CFG.EPOCHS} "
-            f"loss={running / max(seen, 1):.4f} gold58={gold_auc:.4f} "
+            f"loss={running / max(seen, 1):.4f} gold-val={gold_auc:.4f} "
             f"weak={weak_auc:.4f} gate={gate:.4f}")
 
         if gate > best_gate:
@@ -1499,6 +1503,10 @@ def main():
         raise RuntimeError("No training time remains after the test reserve.")
     gates, details = {}, {}
 
+    gold_order = gold_rows.copy()
+    np.random.RandomState(CFG.SEED + 9001).shuffle(gold_order)
+    gold_val_size = max(10, int(round(len(gold_order) * 0.20)))
+
     for run in range(CFG.N_RUNS):
         if time.monotonic() > train_deadline:
             log(f"Budget exhausted after {run} runs.")
@@ -1508,18 +1516,23 @@ def main():
         rng.shuffle(shuffled)
         cut = max(int(len(shuffled) * CFG.WEAK_HOLDOUT), 48)
         val_rows, tr_rows = shuffled[:cut], shuffled[cut:]
+        # Rotate the expert holdout so the three-run ensemble is selected on
+        # all available adjudicated labels without training on its own gate.
+        gold_start = (run * gold_val_size) % len(gold_order)
+        gold_val_rows = np.roll(gold_order, -gold_start)[:gold_val_size]
+        gold_train_rows = np.setdiff1d(gold_rows, gold_val_rows, assume_unique=True)
         if CFG.GOLD_IN_TRAIN:
-            tr_rows = np.concatenate([tr_rows, gold_rows])
+            tr_rows = np.concatenate([tr_rows, gold_train_rows])
         log(f"Run {run}: train={len(tr_rows)} weak-val={len(val_rows)} "
-            f"gold-monitor={len(gold_rows)}")
+            f"gold-train={len(gold_train_rows)} gold-val={len(gold_val_rows)}")
         gate, detail = train_one_run(
-            run, memmap_path, n_rows, tr_rows, val_rows, gold_rows,
+            run, memmap_path, n_rows, tr_rows, val_rows, gold_val_rows,
             y, w, present, gold_truth, train_deadline)
         gates[run] = gate
         if detail is not None:
             details[run] = detail
         log(f"Run {run} best gate={gate:.4f} "
-            f"(gold={detail['gold']:.4f} weak={detail['weak']:.4f})"
+            f"(gold-val={detail['gold']:.4f} weak={detail['weak']:.4f})"
             if detail else f"Run {run} produced no checkpoint")
 
     with open(os.path.join(CFG.OUTPUT_DIR, "run_gates.json"), "w") as fh:
@@ -1527,7 +1540,7 @@ def main():
 
     if details:
         best_run = max(details.keys(), key=lambda r: gates[r])
-        log("Per-label gold AUC of the best run (monitor only, not the gate):")
+        log("Per-label held-out expert AUC of the best run:")
         for target, value in details[best_run]["per_label"].items():
             log(f"  {target:<18} {value:.4f}")
 
