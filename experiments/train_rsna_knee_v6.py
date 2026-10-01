@@ -155,10 +155,7 @@ class CFG:
     EMA_DECAY = 0.997
     LABEL_POS_WEIGHT_CAP = 6.0
     WEAK_HOLDOUT = 0.10
-    # Select checkpoints by expert labels first. The expert validation rows
-    # are held out per run; weak validation is only a stabilizing secondary
-    # signal because it is derived from reports rather than adjudicated labels.
-    GATE_GOLD_WEIGHT = 0.75
+    GATE_GOLD_WEIGHT = 0.0
     MIXUP_ALPHA = 0.25
     # The global study head is the validated v5 path. A max over individual
     # slices is too sensitive to one noisy slice and regressed the submission.
@@ -501,7 +498,9 @@ def _conf_col(df, target):
 
 
 def find_external_labels_csv(explicit=None):
-    if explicit and os.path.isfile(explicit):
+    if explicit:
+        if not os.path.isfile(explicit):
+            raise FileNotFoundError(f"Explicit labels CSV not found: {explicit}")
         return explicit
     preferred = [
         "report_labels_v4hybrid.csv",
@@ -563,7 +562,8 @@ def load_external_labels(train_df, path):
         if col is None:
             continue
         vals = pd.to_numeric(mapped[col], errors="coerce").to_numpy(dtype=np.float32)
-        y[:, j] = np.clip(vals, 0.0, 1.0)
+        vals[(vals < 0.0) | (vals > 1.0)] = np.nan
+        y[:, j] = vals
         conf_col = _conf_col(mapped, target)
         if conf_col is not None:
             conf = pd.to_numeric(mapped[conf_col], errors="coerce").to_numpy(dtype=np.float32)
@@ -1257,7 +1257,14 @@ def train_one_run(run, memmap_path, n_rows, train_rows, weak_val_rows,
     scaler = torch.amp.GradScaler("cuda", enabled=CFG.AMP) if CFG.AMP else None
     ema = EMA(model, CFG.EMA_DECAY)
 
-    pos_rate = np.clip(y[train_rows].mean(axis=0), 1e-3, 1 - 1e-3)
+    supervised = w[train_rows] > 0.0
+    observed_mass = supervised.sum(axis=0)
+    pos_mass = (y[train_rows] * supervised).sum(axis=0)
+    pos_rate = np.divide(
+        pos_mass, observed_mass, out=np.full(CFG.N_TARGETS, 0.5),
+        where=observed_mass > 0,
+    )
+    pos_rate = np.clip(pos_rate, 1e-3, 1 - 1e-3)
     pos_weight = torch.tensor(
         np.clip((1 - pos_rate) / pos_rate, 1.0, CFG.LABEL_POS_WEIGHT_CAP),
         dtype=torch.float32, device=CFG.DEVICE)
@@ -1376,7 +1383,7 @@ def generate_submission(test_df, test_series_df, gates, deadline):
         predictions, rows = infer(model, loader, tta=False)
         ordered = np.zeros_like(predictions)
         ordered[rows] = predictions
-        weight = max(gates.get(run, 0.5) - 0.45, 0.02)
+        weight = 1.0
         accumulator += ordered * weight
         total_weight += weight
         del model
