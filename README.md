@@ -1,45 +1,25 @@
 # RSNA Knee Abnormality Detection
 
-A PyTorch research codebase for the RSNA Knee Abnormality Detection Kaggle competition. It performs multi-label abnormality detection from knee MRI studies using three anatomical views (sagittal, coronal, and axial), fluid-sensitive series selection, attention-based slice aggregation, and 12 abnormality predictions for each study.
+A PyTorch research project for the RSNA Knee Abnormality Detection Kaggle competition. The pipeline predicts 12 study-level knee MRI abnormalities from sagittal, coronal, and axial views, using metadata-aware series selection, DICOM preprocessing, slice aggregation, and multi-view fusion.
 
-## Project Status
+## What This Project Does
 
-This repository contains the training and experiment code for a Kaggle competition submission. The reusable dataset, preprocessing, model, loss, metric, and trainer components are implemented under `src/` and covered by tests under `tests/`. The versioned end-to-end experiment scripts under `experiments/` are retained so their changes can be compared.
+For each MRI study, the pipeline:
 
-The only auxiliary script currently retained is `scripts/check_folds.py`, which reports fold and label distributions from `data/train.csv`.
-
-## Model Overview
-
-For each study, the pipeline:
-
-1. Filters series metadata to fluid-sensitive sagittal, coronal, and axial acquisitions.
-2. Selects the best available series using sequence description and slice count.
-3. Loads and normalizes DICOM slices, then samples a fixed number of slices per view.
-4. Encodes slices with a shared vision backbone.
-5. Aggregates slices with attention and fuses the three views.
-6. Produces independent logits for the following targets:
+1. Finds fluid-sensitive sagittal, coronal, and axial series in the metadata.
+2. Selects the strongest available series using sequence description and slice count.
+3. Loads, normalizes, resizes, and samples a fixed number of DICOM slices.
+4. Encodes slices with a shared image backbone.
+5. Aggregates slice features and fuses the three anatomical views.
+6. Predicts independent logits for 12 abnormalities:
 
 `ACL`, `MCL`, `Medial Meniscus`, `Lateral Meniscus`, `Medial OA`, `Lateral OA`, `PF OA`, `Effusion`, `Synovitis`, `Baker's`, `Contusion`, and `Fracture`.
 
-## Repository Layout
+The modular components are covered by unit tests, while the versioned experiment scripts preserve the evolution of the competition training pipeline.
 
-```text
-src/
-	data/            DICOM loading, study dataset, and fold splitting
-	preprocessing/   normalization, sampling, and transforms
-	models/          backbone, slice aggregation, view fusion, and model
-	training/        losses and training loop
-	utils/           metrics and related helpers
-tests/             unit tests for the implemented modules
-experiments/       versioned offline/Kaggle training and inference scripts
-data/              local CSV metadata included with this checkout
-weights/           location for local model weights
-outputs/           checkpoints and generated artifacts
-```
+## Quick Start
 
-## Requirements
-
-Python 3.10 or newer and a CPU or CUDA-enabled PyTorch installation are recommended. `requirements.txt` is currently empty, so install the runtime and test dependencies explicitly in a virtual environment:
+Create a virtual environment from the repository root, then install PyTorch for the target hardware and the remaining dependencies:
 
 ```bash
 python -m venv .venv
@@ -54,9 +34,11 @@ python -m pip install torch torchvision pandas numpy scikit-learn pydicom pytest
 
 For CUDA, install the PyTorch build that matches the target machine from the [official PyTorch selector](https://pytorch.org/get-started/locally/) before installing the remaining packages.
 
+`requirements.txt` is intentionally empty in this checkout, so the explicit install command above is the reliable setup path.
+
 ## Data Layout
 
-The dataset class expects study-level labels, series metadata, and DICOM files arranged like this:
+The training code expects study-level labels, series metadata, and DICOM files in the competition layout. The checked-in CSV files are metadata samples; the DICOM image directories are not included in this repository.
 
 ```text
 dataset/
@@ -70,9 +52,14 @@ dataset/
 		<StudyInstanceUID>/<SeriesInstanceUID>/*.dcm
 ```
 
-`train.csv` must contain `StudyInstanceUID` plus all 12 target columns. The series CSV files must include `StudyInstanceUID`, `SeriesInstanceUID`, `Fluid_Sensitive`, and `Anatomical_Plane`. The checked-in CSV files under `data/` are metadata examples; the DICOM image directories are not included in this repository.
+Required metadata columns:
 
-## Run the Tests
+- `train.csv`: `StudyInstanceUID` plus all 12 target columns.
+- `train_series.csv` and `test_series.csv`: `StudyInstanceUID`, `SeriesInstanceUID`, `Fluid_Sensitive`, and `Anatomical_Plane`.
+
+The modular dataset drops training rows with missing target labels. Missing anatomical views are represented by zero tensors, allowing studies with incomplete view coverage to be loaded.
+
+## Validate the Installation
 
 From the repository root:
 
@@ -82,24 +69,35 @@ python -m pytest -q
 
 The model tests use small fake backbones where possible, so the test suite does not require the full MRI dataset.
 
-## Kaggle Training
+## Run Training on Kaggle
 
-The versioned scripts in `experiments/` are configured for the RSNA competition directory layout and automatically use CUDA when available. Before a scored offline run:
+The versioned scripts in `experiments/` are designed for Kaggle's competition directory layout and use CUDA automatically when it is available. The latest workflow is `experiments/train_rsna_knee_v6.py`.
+
+Before a scored offline run:
 
 1. Attach the RSNA competition data to the notebook or execution environment.
 2. Attach a dataset containing the matching torchvision pretrained checkpoint.
-3. Add that dataset path to `Config.PRETRAINED_WEIGHTS_DIRS` if it is not one of the default search paths.
-4. Run the selected script from `experiments/` in the Kaggle notebook or copy it into the submission notebook.
+3. Add the weight dataset path to `CFG.WEIGHT_DIRS` if it is not already searched.
+4. Run the selected script from `experiments/` in the Kaggle notebook.
 
-The script intentionally stops when pretrained weights cannot be found. This avoids silently training a randomly initialized backbone when internet access is disabled. It writes checkpoints and the final submission according to `Config.OUTPUT_DIR` and `Config.SUBMISSION_PATH`.
+The script intentionally stops when pretrained weights cannot be found. This prevents an offline Kaggle run from silently using a randomly initialized backbone. It writes checkpoints to the configured output directory and produces `submission.csv`.
 
-The standalone script supports offline EfficientNet-B0 and ResNet-34 checkpoints. The checkpoint filename must match the torchvision filename expected by the selected backbone.
+Example commands from the experiment directory:
+
+```bash
+python train_rsna_knee_v6.py
+python train_rsna_knee_v6.py --backbone b3 --runs 2 --epochs 7
+```
+
+Useful options include `--debug-max-studies`, `--budget-hours`, `--device`, `--labels-csv`, `--image-size`, and `--batch-size`. The script supports offline EfficientNet-B0 and EfficientNet-B3 checkpoints; the checkpoint filename must match the torchvision filename expected by the selected backbone. Use `--no-pretrained` only for debugging, not for a scored submission.
+
+The script can also fall back to the local metadata under `data/` for development, but the corresponding DICOM directories are still required for image loading.
 
 ## Experiment Results
 
-The initial Kaggle submission from `arjun.ipynb` achieved an approximate score of **0.487**. This was below the random-prediction reference point of about 0.50 and indicated that the model was not learning useful signal. The main suspected cause was the scored notebook failing to download ImageNet pretrained weights because Kaggle execution has no internet access, then continuing with a randomly initialized backbone.
+The initial Kaggle submission from `arjun.ipynb` achieved an approximate score of **0.487**, below the random-prediction reference point of about 0.50. The main suspected cause was a missing ImageNet checkpoint in the offline Kaggle environment, followed by training with a randomly initialized backbone.
 
-The v2 training script addresses this by requiring pretrained weights to be staged locally before model creation. Do not treat the 0.487 result as a final benchmark for the corrected pipeline; record a new Kaggle score after running the offline-weight workflow.
+The v2 training script addressed this by requiring pretrained weights to be staged locally before model creation. The 0.487 result should not be treated as a benchmark for the corrected pipeline.
 
 ### Reported Kaggle Scores
 
@@ -115,12 +113,11 @@ The following scores were reported from successive experiments. They are leaderb
 | Five-run logit ensemble experiment | 0.759 | Regression; reverted |
 | Repeated three-run experiment | 0.755 | Run-to-run leaderboard variance observed |
 
-Version 5 contains the latest label, validation, caching, and training-stability improvements. It has not yet received a separate Kaggle leaderboard score.
+Version 5 contains the latest label, validation, caching, and training-stability improvements recorded in the original experiment history. Version 6 extends the offline workflow with improved weak-label handling, denser slice sampling, optional report-label CSVs, and additional training controls; it has not yet received a separate Kaggle leaderboard score.
 
-## Development Notes
+## Practical Notes
 
-- Missing or unavailable views are represented by zero tensors in `KneeDataset`.
-- The modular dataset currently drops rows with missing target labels.
-- The training criterion and metric operate on the 12-target multi-label output.
-- Keep large DICOM datasets, checkpoints, and generated predictions outside version control.
-- `scripts/check_folds.py` is a diagnostic utility; compare the versioned training scripts before choosing the experiment to run.
+- The competition metric is macro ROC-AUC over the 12 study-level findings.
+- `scripts/check_folds.py` reports fold and label distributions from `data/train.csv`.
+- Keep DICOM datasets, pretrained weights, checkpoints, caches, and generated predictions outside version control.
+- Compare the versioned experiment scripts before selecting a training workflow; they are retained to make changes reproducible.
