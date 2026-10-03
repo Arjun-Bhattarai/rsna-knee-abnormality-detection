@@ -138,14 +138,19 @@ class CFG:
     UNMENTIONED_W = 0.0
     AMBIGUOUS_W = 0.05
     GOLD_IN_TRAIN = True
-    GOLD_WEIGHT = 2.0
+    # The expert set is tiny but is the only ground-truth signal.  A larger
+    # weight prevents thousands of noisy lexicon rows from drowning it out.
+    GOLD_WEIGHT = 6.0
 
     BATCH_SIZE = 6
     ACCUM = 2
     NUM_WORKERS = min(4, os.cpu_count() or 1)
     N_RUNS = 3
-    EPOCHS = 8
-    PATIENCE = 2
+    # The observed 8-epoch runs used about 5 hours after caching.  Ten
+    # epochs adds useful optimization while leaving a safe buffer for the
+    # 90-minute test reserve inside the 9-hour limit.
+    EPOCHS = 10
+    PATIENCE = 3
     WARMUP_STEPS = 200
     MAX_RUNTIME_HOURS = 9.0
     BACKBONE = "b0"
@@ -155,7 +160,9 @@ class CFG:
     EMA_DECAY = 0.997
     LABEL_POS_WEIGHT_CAP = 6.0
     WEAK_HOLDOUT = 0.10
-    GATE_GOLD_WEIGHT = 0.0
+    # Weak validation is useful for stability, but checkpoint selection must
+    # follow the expert labels because they match the competition metric.
+    GATE_GOLD_WEIGHT = 0.75
     MIXUP_ALPHA = 0.25
     # The global study head is the validated v5 path. A max over individual
     # slices is too sensitive to one noisy slice and regressed the submission.
