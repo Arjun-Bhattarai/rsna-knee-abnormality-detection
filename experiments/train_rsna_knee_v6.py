@@ -131,6 +131,7 @@ class CFG:
     DEPTH = NUM_SLICES + 2
     SLICE_LO = 0.0
     SLICE_HI = 1.0
+    SLICE_SAMPLING = "uniform"
     PLANES = ("sagittal", "coronal", "axial")
     N_VIEWS = 3
 
@@ -144,6 +145,8 @@ class CFG:
     # The expert set is tiny but is the only ground-truth signal.  A larger
     # weight prevents thousands of noisy lexicon rows from drowning it out.
     GOLD_WEIGHT = 2.0
+    EXTERNAL_LABEL_WEIGHT = 0.7
+    LEXICON_LABEL_WEIGHT = 0.3
 
     BATCH_SIZE = 6
     ACCUM = 2
@@ -162,10 +165,14 @@ class CFG:
     EMA_DECAY = 0.997
     LABEL_POS_WEIGHT_CAP = 6.0
     WEAK_HOLDOUT = 0.10
+    GOLD_VAL_FRACTION = 0.25
+    GOLD_VAL_MIN = 12
     # Gold studies are included in training, so their AUC is in-sample and
     # must not influence checkpoint selection.
     GATE_GOLD_WEIGHT = 0.0
     MIXUP_ALPHA = 0.0  # disabled; it regressed the validated v5 baseline
+    # Keep the current baseline at 0.4; run Experiment 2 with 0.15.
+    CUTOUT_PROB = 0.4
     # The global study head is the validated v5 path. A max over individual
     # slices is too sensitive to one noisy slice and regressed the submission.
     MIL_BLEND = 0.0
@@ -645,12 +652,68 @@ def merge_label_sources(lex_y, lex_w, ext_y, ext_w):
     y = lex_y.copy()
     w = lex_w.copy()
     if ext_y is None:
+        log(f"Label sources: lexicon={len(y)} studies, external=0 studies")
         return y, w
     valid = np.isfinite(ext_y)
-    y[valid] = ext_y[valid]
-    w[valid] = np.maximum(ext_w[valid], 0.15)
-    log(f"Using external labels on {valid.sum()}/{valid.size} target-cells")
+    ext_weight = float(CFG.EXTERNAL_LABEL_WEIGHT)
+    lex_weight = float(CFG.LEXICON_LABEL_WEIGHT)
+    total_weight = ext_weight + lex_weight
+    if total_weight <= 0:
+        raise ValueError("External and lexicon label weights must sum to > 0.")
+    ext_weight /= total_weight
+    lex_weight /= total_weight
+    y[valid] = ext_weight * ext_y[valid] + lex_weight * lex_y[valid]
+    w[valid] = np.maximum(
+        ext_weight * ext_w[valid] + lex_weight * lex_w[valid], 0.15
+    )
+    ext_cells = int(valid.sum())
+    ext_studies = int(valid.any(axis=1).sum())
+    log(
+        f"Label sources: lexicon={len(y)} studies, "
+        f"external={ext_studies} studies/{ext_cells} target-cells, "
+        f"blend=external:{ext_weight:.2f}, lexicon:{lex_weight:.2f}"
+    )
     return y, w
+
+
+def _multilabel_gold_split(gold_rows, gold_truth, val_size, seed):
+    """Choose a deterministic gold holdout that balances each target."""
+    rows = np.asarray(gold_rows, dtype=np.int64)
+    val_size = min(max(1, int(val_size)), len(rows) - 1)
+    rng = np.random.RandomState(seed)
+    order = rows.copy()
+    rng.shuffle(order)
+
+    truth = gold_truth[order]
+    known = np.isfinite(truth)
+    positives = np.where(known, truth >= 0.5, False)
+    negatives = np.where(known, truth < 0.5, False)
+    desired_pos = np.rint(positives.sum(axis=0) * val_size / len(rows))
+    desired_neg = np.rint(negatives.sum(axis=0) * val_size / len(rows))
+    selected = []
+    remaining = list(range(len(order)))
+    pos_done = np.zeros(CFG.N_TARGETS, dtype=np.float32)
+    neg_done = np.zeros(CFG.N_TARGETS, dtype=np.float32)
+
+    for _ in range(val_size):
+        best_score, best_idx = -float("inf"), None
+        for idx in remaining:
+            pos_gain = np.maximum(desired_pos - pos_done, 0.0) * positives[idx]
+            neg_gain = np.maximum(desired_neg - neg_done, 0.0) * negatives[idx]
+            rarity = 1.0 / np.maximum(
+                positives.sum(axis=0) + negatives.sum(axis=0), 1.0
+            )
+            score = float(((pos_gain + neg_gain) * rarity).sum())
+            if score > best_score:
+                best_score, best_idx = score, idx
+        selected.append(best_idx)
+        remaining.remove(best_idx)
+        pos_done += positives[best_idx]
+        neg_done += negatives[best_idx]
+
+    val_rows = order[np.asarray(selected, dtype=np.int64)]
+    train_rows = np.setdiff1d(rows, val_rows, assume_unique=True)
+    return train_rows, val_rows
 
 
 def build_series_plan(series_df):
@@ -784,7 +847,23 @@ def _slice_picks(n_paths, depth):
     hi = int(round(CFG.SLICE_HI * (n_paths - 1)))
     if hi <= lo:
         lo, hi = 0, n_paths - 1
-    return np.linspace(lo, hi, depth).astype(int)
+    positions = np.linspace(lo, hi, depth)
+    if CFG.SLICE_SAMPLING == "uniform":
+        pass
+    elif CFG.SLICE_SAMPLING == "uniform_jitter":
+        spacing = (hi - lo) / max(depth - 1, 1)
+        rng = np.random.RandomState(17 + n_paths * 31 + depth)
+        jitter = rng.uniform(-0.20, 0.20, size=depth) * spacing
+        jitter[[0, -1]] = 0.0
+        positions = np.clip(positions + jitter, lo, hi)
+    elif CFG.SLICE_SAMPLING == "center":
+        normalized = np.linspace(-1.0, 1.0, depth)
+        positions = lo + (normalized * np.abs(normalized) * 0.5 + 0.5) * (hi - lo)
+    else:
+        raise ValueError(
+            f"Unknown slice sampling strategy: {CFG.SLICE_SAMPLING}"
+        )
+    return np.rint(positions).astype(int)
 
 
 def _build_one(args):
@@ -986,7 +1065,7 @@ def gpu_augment(x, present):
     bias = bias.repeat_interleave(S, dim=0)
     flat = flat * gain + bias
 
-    if random.random() < 0.4:
+    if random.random() < CFG.CUTOUT_PROB:
         side = int(H * random.uniform(0.08, 0.22))
         top = random.randint(0, H - side)
         left = random.randint(0, W - side)
@@ -1277,6 +1356,11 @@ def train_one_run(run, memmap_path, n_rows, train_rows, weak_val_rows,
     pos_weight = torch.tensor(
         np.clip((1 - pos_rate) / pos_rate, 1.0, CFG.LABEL_POS_WEIGHT_CAP),
         dtype=torch.float32, device=CFG.DEVICE)
+    log(
+        "Derived target pos_weight: " +
+        ", ".join(f"{name}={value:.2f}"
+                  for name, value in zip(CFG.TARGETS, pos_weight.cpu().numpy()))
+    )
 
     weak_truth = (y[weak_val_rows] > 0.5).astype(np.float32)
     confident = w[weak_val_rows] >= max(CFG.NEG_WEIGHT_W * 0.7, 0.45)
@@ -1347,7 +1431,7 @@ def train_one_run(run, memmap_path, n_rows, train_rows, weak_val_rows,
         if gate > best_gate:
             best_gate, stale = gate, 0
             best_detail = {"gold": gold_auc, "weak": weak_auc,
-                           "per_label": per_label}
+                           "per_label": per_label, "best_epoch": epoch + 1}
             torch.save(model.state_dict(), ckpt)
         else:
             stale += 1
@@ -1421,8 +1505,19 @@ def parse_args():
     parser.add_argument("--no-pretrained", action="store_true")
     parser.add_argument("--backbone", type=str, default="b0", choices=["b0", "b3"])
     parser.add_argument("--labels-csv", type=str, default=None)
+    parser.add_argument("--external-label-weight", type=float,
+                        default=CFG.EXTERNAL_LABEL_WEIGHT)
+    parser.add_argument("--lexicon-label-weight", type=float,
+                        default=CFG.LEXICON_LABEL_WEIGHT)
     parser.add_argument("--image-size", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--mil-blend", type=float, default=CFG.MIL_BLEND,
+                        choices=[0.0, 0.05, 0.10, 0.20])
+    parser.add_argument("--cutout-prob", type=float, default=CFG.CUTOUT_PROB,
+                        choices=[0.0, 0.15, 0.4])
+    parser.add_argument("--slice-sampling", type=str,
+                        default=CFG.SLICE_SAMPLING,
+                        choices=["uniform", "uniform_jitter", "center"])
     return parser.parse_args()
 
 
@@ -1438,6 +1533,13 @@ def main():
     CFG.NO_PRETRAINED = args.no_pretrained
     CFG.BACKBONE = args.backbone
     CFG.LABELS_CSV = args.labels_csv
+    if args.external_label_weight < 0 or args.lexicon_label_weight < 0:
+        raise ValueError("Label source weights must be non-negative.")
+    CFG.EXTERNAL_LABEL_WEIGHT = args.external_label_weight
+    CFG.LEXICON_LABEL_WEIGHT = args.lexicon_label_weight
+    CFG.MIL_BLEND = args.mil_blend
+    CFG.CUTOUT_PROB = args.cutout_prob
+    CFG.SLICE_SAMPLING = args.slice_sampling
     if args.image_size:
         CFG.IMAGE_SIZE = int(args.image_size)
     if args.batch_size:
@@ -1476,6 +1578,11 @@ def main():
     label_block = train_df.reindex(columns=CFG.TARGETS)
     is_gold = label_block.notna().any(axis=1).to_numpy()
     log(f"{len(train_df)} training studies, {int(is_gold.sum())} with expert labels")
+    log(
+        f"Configuration: backbone={CFG.BACKBONE} image={CFG.IMAGE_SIZE} "
+        f"MIL_BLEND={CFG.MIL_BLEND:.2f} cutout_prob={CFG.CUTOUT_PROB:.2f} "
+        f"slice_sampling={CFG.SLICE_SAMPLING}"
+    )
 
     gold_truth = np.full((len(train_df), CFG.N_TARGETS), np.nan, dtype=np.float32)
     gold_truth[is_gold] = label_block.to_numpy(dtype=np.float32)[is_gold]
@@ -1493,6 +1600,16 @@ def main():
             "Falling back to the lexicon.")
 
     y, w = merge_label_sources(lex_y, lex_w, ext_y, ext_w)
+    external_study_mask = (
+        np.isfinite(ext_y).any(axis=1) if ext_y is not None
+        else np.zeros(len(train_df), dtype=bool)
+    )
+    lexicon_only_studies = int((~is_gold & ~external_study_mask).sum())
+    log(
+        f"Label sources before gold override: gold={int(is_gold.sum())} studies, "
+        f"external={int(external_study_mask.sum())} studies, "
+        f"lexicon-only={lexicon_only_studies} studies"
+    )
     with open(os.path.join(CFG.OUTPUT_DIR, "weak_label_stats.json"), "w") as fh:
         json.dump(stats, fh, indent=2)
 
@@ -1523,7 +1640,9 @@ def main():
 
     gold_order = gold_rows.copy()
     np.random.RandomState(CFG.SEED + 9001).shuffle(gold_order)
-    gold_val_size = max(10, int(round(len(gold_order) * 0.20)))
+    gold_val_size = max(
+        CFG.GOLD_VAL_MIN, int(round(len(gold_order) * CFG.GOLD_VAL_FRACTION))
+    )
 
     for run in range(CFG.N_RUNS):
         if time.monotonic() > train_deadline:
@@ -1534,11 +1653,11 @@ def main():
         rng.shuffle(shuffled)
         cut = max(int(len(shuffled) * CFG.WEAK_HOLDOUT), 48)
         val_rows, tr_rows = shuffled[:cut], shuffled[cut:]
-        # Rotate the expert holdout so the three-run ensemble is selected on
-        # all available adjudicated labels without training on its own gate.
-        gold_start = (run * gold_val_size) % len(gold_order)
-        gold_val_rows = np.roll(gold_order, -gold_start)[:gold_val_size]
-        gold_train_rows = np.setdiff1d(gold_rows, gold_val_rows, assume_unique=True)
+        # Use one deterministic multilabel-balanced split for comparable
+        # gates across runs; the gold holdout never enters training.
+        gold_train_rows, gold_val_rows = _multilabel_gold_split(
+            gold_order, gold_truth, gold_val_size, CFG.SEED + 9001
+        )
         if CFG.GOLD_IN_TRAIN:
             tr_rows = np.concatenate([tr_rows, gold_train_rows])
         log(f"Run {run}: train={len(tr_rows)} weak-val={len(val_rows)} "
@@ -1550,7 +1669,8 @@ def main():
         if detail is not None:
             details[run] = detail
         log(f"Run {run} best gate={gate:.4f} "
-            f"(gold-val={detail['gold']:.4f} weak={detail['weak']:.4f})"
+            f"(gold-val={detail['gold']:.4f} weak={detail['weak']:.4f} "
+            f"best-epoch={detail['best_epoch']})"
             if detail else f"Run {run} produced no checkpoint")
 
     with open(os.path.join(CFG.OUTPUT_DIR, "run_gates.json"), "w") as fh:
