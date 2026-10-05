@@ -23,12 +23,15 @@ v6 CHANGES AIMED AT 0.80+
 -------------------------
 1. Prefer an attached public report-label CSV (hybrid LLM / consensus).
    Lexicon is only the fallback. Gold 58 still override as hard labels.
-2. Unmentioned findings get weight 0 (ignored), not a fake negative.
-3. Denser slice sampling over 6-94% of each series (ends are mostly air).
-4. More 2.5D windows (12 vs 8) at 288px if the cache fits, else 256px.
+2. Unmentioned findings retain the validated v5 low-weight prior rather than
+   being treated as hard negatives.
+3. Full-series slice sampling, matching the validated v5 preprocessing.
+4. Eight 2.5D windows at 256px to preserve the validated v5 memory/accuracy
+   tradeoff.
 5. Global fusion head + masked max-MIL over slices/views (helps Baker,
    fracture, focal meniscus tears).
-6. Mixup. Still no horizontal flip (would swap Medial<->Lateral).
+6. Geometric/intensity augmentation. Still no horizontal flip (would swap
+   Medial<->Lateral).
 7. Language-aware clause split + Turkish post-term negation cues.
 8. 9.0 hour wall clock with a 90-minute hidden-test reserve.
 
@@ -122,12 +125,12 @@ class CFG:
     ]
     N_TARGETS = len(TARGETS)
 
-    IMAGE_SIZE = 288
+    IMAGE_SIZE = 256
     FALLBACK_IMAGE_SIZE = 224
-    NUM_SLICES = 12
+    NUM_SLICES = 8
     DEPTH = NUM_SLICES + 2
-    SLICE_LO = 0.06
-    SLICE_HI = 0.94
+    SLICE_LO = 0.0
+    SLICE_HI = 1.0
     PLANES = ("sagittal", "coronal", "axial")
     N_VIEWS = 3
 
@@ -135,22 +138,21 @@ class CFG:
     NEG_TARGET = 0.02
     POS_WEIGHT_W = 1.00
     NEG_WEIGHT_W = 0.90
-    UNMENTIONED_W = 0.0
+    UNMENTIONED_W = 0.35
     AMBIGUOUS_W = 0.05
     GOLD_IN_TRAIN = True
     # The expert set is tiny but is the only ground-truth signal.  A larger
     # weight prevents thousands of noisy lexicon rows from drowning it out.
-    GOLD_WEIGHT = 6.0
+    GOLD_WEIGHT = 2.0
 
     BATCH_SIZE = 6
     ACCUM = 2
     NUM_WORKERS = min(4, os.cpu_count() or 1)
     N_RUNS = 3
-    # The observed 8-epoch runs used about 5 hours after caching.  Ten
-    # epochs adds useful optimization while leaving a safe buffer for the
-    # 90-minute test reserve inside the 9-hour limit.
-    EPOCHS = 10
-    PATIENCE = 3
+    # Eight epochs and two-epoch patience match the validated v5 training
+    # schedule while leaving a safe buffer for the test reserve.
+    EPOCHS = 8
+    PATIENCE = 2
     WARMUP_STEPS = 200
     MAX_RUNTIME_HOURS = 9.0
     BACKBONE = "b0"
@@ -160,10 +162,10 @@ class CFG:
     EMA_DECAY = 0.997
     LABEL_POS_WEIGHT_CAP = 6.0
     WEAK_HOLDOUT = 0.10
-    # Weak validation is useful for stability, but checkpoint selection must
-    # follow the expert labels because they match the competition metric.
-    GATE_GOLD_WEIGHT = 0.75
-    MIXUP_ALPHA = 0.25
+    # Gold studies are included in training, so their AUC is in-sample and
+    # must not influence checkpoint selection.
+    GATE_GOLD_WEIGHT = 0.0
+    MIXUP_ALPHA = 0.0  # disabled; it regressed the validated v5 baseline
     # The global study head is the validated v5 path. A max over individual
     # slices is too sensitive to one noisy slice and regressed the submission.
     MIL_BLEND = 0.0
@@ -1385,12 +1387,14 @@ def generate_submission(test_df, test_series_df, gates, deadline):
         log(f"Inferring checkpoint {run + 1}/{len(checkpoints)}")
         model = KneeModel(pretrained=False, backbone=CFG.BACKBONE).to(CFG.DEVICE)
         model.load_state_dict(torch.load(path, map_location=CFG.DEVICE), strict=False)
-        # Small in-plane rotations are not label-preserving for MRI anatomy;
-        # v5's unaugmented probability inference was the stronger baseline.
-        predictions, rows = infer(model, loader, tta=False)
+        # Average the same small in-plane rotations used by the validated
+        # v5 submission.
+        predictions, rows = infer(model, loader, tta=True)
         ordered = np.zeros_like(predictions)
         ordered[rows] = predictions
-        weight = 1.0
+        # Weight checkpoints by their independent weak-validation gate, as in
+        # the validated v5 ensemble. This reduces the impact of a poor run.
+        weight = max(gates.get(run, 0.5) - 0.45, 0.02)
         accumulator += ordered * weight
         total_weight += weight
         del model
