@@ -145,8 +145,11 @@ class CFG:
     # The expert set is tiny but is the only ground-truth signal.  A larger
     # weight prevents thousands of noisy lexicon rows from drowning it out.
     GOLD_WEIGHT = 2.0
-    EXTERNAL_LABEL_WEIGHT = 0.7
-    LEXICON_LABEL_WEIGHT = 0.3
+    # Public hybrid/LLM report labels are much cleaner than the fallback
+    # keyword parser.  When they are attached, trust them; gold labels still
+    # override both sources below.
+    EXTERNAL_LABEL_WEIGHT = 1.0
+    LEXICON_LABEL_WEIGHT = 0.0
 
     BATCH_SIZE = 6
     ACCUM = 2
@@ -485,10 +488,33 @@ def _target_col(df, target):
         if got == want:
             return c
     aliases = {
-        "baker's": ["bakers", "baker", "bakerscyst"],
-        "pf oa": ["pfoa", "pf_oa"],
-        "medial meniscus": ["medialmeniscus", "mm"],
-        "lateral meniscus": ["lateralmeniscus", "lm"],
+        "acl": ["acltear", "aclrupture", "anteriorcruciateligament"],
+        "mcl": ["mcltear", "mclrupture", "medialcollateralligament"],
+        "medial meniscus": [
+            "medialmeniscus", "medialmeniscal", "medialmeniscustear",
+            "meniscusmedial", "meniscalmedial", "mm",
+        ],
+        "lateral meniscus": [
+            "lateralmeniscus", "lateralmeniscal", "lateralmeniscustear",
+            "meniscuslateral", "meniscallateral", "lm",
+        ],
+        "medial oa": [
+            "medialoa", "medialosteoarthritis", "oa_medial",
+            "osteoarthritismedial", "medialcompartmentoa",
+        ],
+        "lateral oa": [
+            "lateraloa", "lateralosteoarthritis", "oa_lateral",
+            "osteoarthritislateral", "lateralcompartmentoa",
+        ],
+        "pf oa": [
+            "pfoa", "pf_oa", "patellofemoraloa",
+            "patellofemoralosteoarthritis", "patellofemoral",
+        ],
+        "effusion": ["jointeffusion", "knee_effusion", "fluid"],
+        "synovitis": ["synovialinflammation"],
+        "baker's": ["bakers", "baker", "bakerscyst", "poplitealcyst"],
+        "contusion": ["bonecontusion", "bruise", "bonebruise"],
+        "fracture": ["fx", "bonefracture"],
     }
     for alias in aliases.get(target.lower(), []):
         for c in df.columns:
@@ -515,19 +541,33 @@ def _conf_col(df, target):
 
 def find_external_labels_csv(explicit=None):
     if explicit:
-        if not os.path.isfile(explicit):
+        if os.path.isdir(explicit):
+            roots = [explicit]
+        elif os.path.isfile(explicit):
+            return explicit
+        else:
             raise FileNotFoundError(f"Explicit labels CSV not found: {explicit}")
-        return explicit
+    else:
+        roots = [
+            CFG.KAGGLE_INPUT,
+            CFG.REPO_ROOT,
+            os.path.join(CFG.REPO_ROOT, "data"),
+            ".",
+        ]
     preferred = [
         "report_labels_v4hybrid.csv",
+        "report_labels_hybrid.csv",
+        "hybrid_report_labels.csv",
         "llm_labels_v4_blend.csv",
         "train_targets_llm_consensus.csv",
+        "train_labels_llm_consensus.csv",
         "merged_llm_labels.csv",
+        "llm_labels_merged.csv",
+        "train_llm_labels.csv",
         "report_labels_v2.csv",
         "llm_labels_v2.csv",
         "weak_labels.csv",
     ]
-    roots = [CFG.KAGGLE_INPUT, CFG.REPO_ROOT, os.path.join(CFG.REPO_ROOT, "data"), "."]
     seen = set()
     ranked = []
     for root in roots:
@@ -550,16 +590,22 @@ def find_external_labels_csv(explicit=None):
                 rank = 40
             ranked.append((rank, path))
     ranked.sort()
+    checked = []
     for _, path in ranked:
         try:
             head = pd.read_csv(path, nrows=3)
         except Exception:
             continue
+        checked.append(os.path.basename(path))
         if _col(head, "StudyInstanceUID") is None:
             continue
         hits = sum(_target_col(head, t) is not None for t in CFG.TARGETS)
         if hits >= 8:
+            log(f"External label CSV candidate accepted: {path} ({hits}/12 targets)")
             return path
+        log(f"External label CSV candidate skipped: {path} ({hits}/12 targets)")
+    if checked:
+        log("Checked external label CSV candidates: " + ", ".join(checked[:12]))
     return None
 
 
