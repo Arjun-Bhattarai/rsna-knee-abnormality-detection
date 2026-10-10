@@ -189,6 +189,9 @@ class CFG:
     DEBUG_MAX_STUDIES = None
     LABELS_CSV = None
     NO_PRETRAINED = False
+    ALLOW_LEXICON_FALLBACK = False
+    MIN_EXTERNAL_STUDIES = 3000
+    RANK_ENSEMBLE = True
 
 
 START_TIME = time.monotonic()
@@ -640,6 +643,33 @@ def load_external_labels(train_df, path):
     covered = np.isfinite(y).any(axis=1).sum()
     log(f"External labels {os.path.basename(path)}: {covered}/{len(train_df)} studies matched")
     return y, w
+
+
+def _external_coverage(ext_y):
+    if ext_y is None:
+        return 0, 0
+    valid = np.isfinite(ext_y)
+    return int(valid.any(axis=1).sum()), int(valid.sum())
+
+
+def require_external_labels_for_scoring(ext_y):
+    studies, cells = _external_coverage(ext_y)
+    if studies >= CFG.MIN_EXTERNAL_STUDIES:
+        return
+    if CFG.DEBUG_MAX_STUDIES or CFG.ALLOW_LEXICON_FALLBACK:
+        log(
+            f"WARNING: external label coverage is only {studies} studies/"
+            f"{cells} target-cells; continuing because lexicon fallback is allowed."
+        )
+        return
+    raise RuntimeError(
+        "External hybrid/LLM report labels were not found or matched too few studies "
+        f"({studies} studies/{cells} target-cells). Your latest Kaggle run fell back "
+        "to lexicon labels and scored 0.757. Attach a public label dataset such as "
+        "flight0234/rsna-knee-hybrid-report-labels or "
+        "yunusgmsoy/rsna-knee-llm-labels-2-source-merged, or pass "
+        "--allow-lexicon-fallback only for debugging."
+    )
 
 
 def build_weak_labels(train_df):
@@ -1308,6 +1338,29 @@ def macro_auc(targets, predictions, return_per_label=False):
     return (value, per_label) if return_per_label else value
 
 
+def rank_columns(predictions):
+    """Convert each target column to normalized average ranks for AUC ensembling."""
+    ranked = np.zeros_like(predictions, dtype=np.float64)
+    n = predictions.shape[0]
+    if n <= 1:
+        return predictions.astype(np.float64)
+    for j in range(predictions.shape[1]):
+        order = np.argsort(predictions[:, j], kind="mergesort")
+        ranks = np.empty(n, dtype=np.float64)
+        ranks[order] = np.arange(n, dtype=np.float64)
+        values = predictions[order, j]
+        start = 0
+        while start < n:
+            end = start + 1
+            while end < n and values[end] == values[start]:
+                end += 1
+            if end - start > 1:
+                ranks[order[start:end]] = 0.5 * (start + end - 1)
+            start = end
+        ranked[:, j] = (ranks + 0.5) / n
+    return ranked
+
+
 def make_loader(dataset, shuffle, drop_last=False, num_workers=None):
     if num_workers is None:
         num_workers = CFG.NUM_WORKERS
@@ -1522,6 +1575,8 @@ def generate_submission(test_df, test_series_df, gates, deadline):
         predictions, rows = infer(model, loader, tta=True)
         ordered = np.zeros_like(predictions)
         ordered[rows] = predictions
+        if CFG.RANK_ENSEMBLE:
+            ordered = rank_columns(ordered)
         # Weight checkpoints by their independent weak-validation gate, as in
         # the validated v5 ensemble. This reduces the impact of a poor run.
         weight = max(gates.get(run, 0.5) - 0.45, 0.02)
@@ -1564,6 +1619,10 @@ def parse_args():
     parser.add_argument("--slice-sampling", type=str,
                         default=CFG.SLICE_SAMPLING,
                         choices=["uniform", "uniform_jitter", "center"])
+    parser.add_argument("--allow-lexicon-fallback", action="store_true",
+                        help="Allow scored training without external report labels.")
+    parser.add_argument("--no-rank-ensemble", action="store_true",
+                        help="Average raw probabilities instead of per-target ranks.")
     return parser.parse_args()
 
 
@@ -1586,6 +1645,8 @@ def main():
     CFG.MIL_BLEND = args.mil_blend
     CFG.CUTOUT_PROB = args.cutout_prob
     CFG.SLICE_SAMPLING = args.slice_sampling
+    CFG.ALLOW_LEXICON_FALLBACK = args.allow_lexicon_fallback
+    CFG.RANK_ENSEMBLE = not args.no_rank_ensemble
     if args.image_size:
         CFG.IMAGE_SIZE = int(args.image_size)
     if args.batch_size:
@@ -1627,7 +1688,7 @@ def main():
     log(
         f"Configuration: backbone={CFG.BACKBONE} image={CFG.IMAGE_SIZE} "
         f"MIL_BLEND={CFG.MIL_BLEND:.2f} cutout_prob={CFG.CUTOUT_PROB:.2f} "
-        f"slice_sampling={CFG.SLICE_SAMPLING}"
+        f"slice_sampling={CFG.SLICE_SAMPLING} rank_ensemble={CFG.RANK_ENSEMBLE}"
     )
 
     gold_truth = np.full((len(train_df), CFG.N_TARGETS), np.nan, dtype=np.float32)
@@ -1644,6 +1705,7 @@ def main():
         log("No public LLM/hybrid label CSV found. Attach "
             "flight0234/rsna-knee-hybrid-report-labels for the 0.80+ jump. "
             "Falling back to the lexicon.")
+    require_external_labels_for_scoring(ext_y)
 
     y, w = merge_label_sources(lex_y, lex_w, ext_y, ext_w)
     external_study_mask = (
