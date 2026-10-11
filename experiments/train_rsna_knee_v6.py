@@ -154,7 +154,7 @@ class CFG:
     BATCH_SIZE = 6
     ACCUM = 2
     NUM_WORKERS = min(4, os.cpu_count() or 1)
-    N_RUNS = 3
+    N_RUNS = 5
     # Eight epochs and two-epoch patience match the validated v5 training
     # schedule while leaving a safe buffer for the test reserve.
     EPOCHS = 8
@@ -170,9 +170,10 @@ class CFG:
     WEAK_HOLDOUT = 0.10
     GOLD_VAL_FRACTION = 0.25
     GOLD_VAL_MIN = 12
-    # Gold studies are included in training, so their AUC is in-sample and
-    # must not influence checkpoint selection.
-    GATE_GOLD_WEIGHT = 0.0
+    # The gold validation split is excluded from each run's training rows, so
+    # its AUC is a small but genuine expert holdout signal. Keep it
+    # conservative because the holdout contains only a few studies.
+    GATE_GOLD_WEIGHT = 0.25
     MIXUP_ALPHA = 0.0  # disabled; it regressed the validated v5 baseline
     # Keep the current baseline at 0.4; run Experiment 2 with 0.15.
     CUTOUT_PROB = 0.4
@@ -1630,7 +1631,7 @@ def main():
     args = parse_args()
     CFG.DEVICE = args.device.lower()
     CFG.AMP = CFG.DEVICE == "cuda"
-    CFG.N_RUNS = max(1, min(args.runs, 3))
+    CFG.N_RUNS = max(1, min(args.runs, 5))
     CFG.EPOCHS = max(1, args.epochs)
     CFG.MAX_RUNTIME_HOURS = max(1.0, min(args.budget_hours, 9.0))
     CFG.TOTAL_BUDGET = int(CFG.MAX_RUNTIME_HOURS * 3600)
