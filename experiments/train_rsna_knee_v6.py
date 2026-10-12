@@ -144,7 +144,7 @@ class CFG:
     GOLD_IN_TRAIN = True
     # The expert set is tiny but is the only ground-truth signal.  A larger
     # weight prevents thousands of noisy lexicon rows from drowning it out.
-    GOLD_WEIGHT = 2.0
+    GOLD_WEIGHT = 4.0
     # Public hybrid/LLM report labels are much cleaner than the fallback
     # keyword parser.  When they are attached, trust them; gold labels still
     # override both sources below.
