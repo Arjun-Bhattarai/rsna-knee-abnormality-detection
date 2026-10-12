@@ -44,6 +44,8 @@ Optional but this is the score jump:
   - flight0234/rsna-knee-hybrid-report-labels  (report_labels_v4hybrid.csv)
     and/or yunusgmsoy/rsna-knee-llm-labels-2-source-merged
   - EfficientNet-B3 weights if you pass --backbone b3
+  - An independently generated reader submission (12 target columns) if you
+    pass --reader-predictions; it is rank-blended at inference.
 
 Notebook:
   !python train_rsna_knee_v6.py
@@ -193,6 +195,8 @@ class CFG:
     ALLOW_LEXICON_FALLBACK = False
     MIN_EXTERNAL_STUDIES = 3000
     RANK_ENSEMBLE = True
+    READER_PREDICTIONS = None
+    READER_RANK_WEIGHT = 0.30
 
 
 START_TIME = time.monotonic()
@@ -1362,6 +1366,41 @@ def rank_columns(predictions):
     return ranked
 
 
+def load_reader_predictions(path, test_df):
+    """Load and validate an external reader submission for rank blending."""
+    if not path:
+        return None
+    if not os.path.isfile(path):
+        raise FileNotFoundError(
+            f"Reader predictions file not found: {path}. "
+            "Attach the reader submission dataset and pass its CSV path."
+        )
+    reader = pd.read_csv(path)
+    required = ["StudyInstanceUID"] + CFG.TARGETS
+    missing = [column for column in required if column not in reader.columns]
+    if missing:
+        raise ValueError(
+            "Reader predictions are missing required columns: "
+            + ", ".join(missing)
+        )
+    reader["StudyInstanceUID"] = reader["StudyInstanceUID"].astype(str)
+    if reader["StudyInstanceUID"].duplicated().any():
+        raise ValueError("Reader predictions contain duplicate StudyInstanceUID values.")
+
+    expected = test_df["StudyInstanceUID"].astype(str)
+    indexed = reader.set_index("StudyInstanceUID").reindex(expected)
+    if indexed[CFG.TARGETS].isna().any().any():
+        missing_ids = expected[~expected.isin(reader["StudyInstanceUID"])]
+        raise ValueError(
+            "Reader predictions do not cover every test study; missing "
+            + ", ".join(missing_ids.tolist())
+        )
+    values = indexed[CFG.TARGETS].to_numpy(dtype=np.float64)
+    if not np.isfinite(values).all():
+        raise ValueError("Reader predictions contain NaN or infinite values.")
+    return values
+
+
 def make_loader(dataset, shuffle, drop_last=False, num_workers=None):
     if num_workers is None:
         num_workers = CFG.NUM_WORKERS
@@ -1589,6 +1628,19 @@ def generate_submission(test_df, test_series_df, gates, deadline):
             torch.cuda.empty_cache()
 
     accumulator /= max(total_weight, 1e-6)
+    reader = load_reader_predictions(CFG.READER_PREDICTIONS, test_df)
+    if reader is not None:
+        reader_rank_weight = CFG.READER_RANK_WEIGHT
+        if CFG.RANK_ENSEMBLE:
+            reader = rank_columns(reader)
+        accumulator = (
+            (1.0 - reader_rank_weight) * accumulator
+            + reader_rank_weight * reader
+        )
+        log(
+            f"Rank-blended external reader predictions at "
+            f"weight={reader_rank_weight:.2f}"
+        )
     submission = pd.DataFrame({"StudyInstanceUID": test_df["StudyInstanceUID"]})
     for j, target in enumerate(CFG.TARGETS):
         submission[target] = np.clip(accumulator[:, j], 1e-6, 1 - 1e-6)
@@ -1624,6 +1676,18 @@ def parse_args():
                         help="Allow scored training without external report labels.")
     parser.add_argument("--no-rank-ensemble", action="store_true",
                         help="Average raw probabilities instead of per-target ranks.")
+    parser.add_argument(
+        "--reader-predictions",
+        type=str,
+        default=None,
+        help="CSV with StudyInstanceUID and all 12 target predictions to rank-blend.",
+    )
+    parser.add_argument(
+        "--reader-rank-weight",
+        type=float,
+        default=CFG.READER_RANK_WEIGHT,
+        help="Weight for --reader-predictions in the final rank blend (0 to 1).",
+    )
     return parser.parse_args()
 
 
@@ -1648,6 +1712,10 @@ def main():
     CFG.SLICE_SAMPLING = args.slice_sampling
     CFG.ALLOW_LEXICON_FALLBACK = args.allow_lexicon_fallback
     CFG.RANK_ENSEMBLE = not args.no_rank_ensemble
+    if not 0.0 <= args.reader_rank_weight <= 1.0:
+        raise ValueError("Reader rank weight must be between 0 and 1.")
+    CFG.READER_PREDICTIONS = args.reader_predictions
+    CFG.READER_RANK_WEIGHT = args.reader_rank_weight
     if args.image_size:
         CFG.IMAGE_SIZE = int(args.image_size)
     if args.batch_size:

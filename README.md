@@ -79,6 +79,10 @@ Before a scored offline run:
 2. Attach a dataset containing the matching torchvision pretrained checkpoint.
 3. Add the weight dataset path to `CFG.WEIGHT_DIRS` if it is not already searched.
 4. Run the selected script from `experiments/` in the Kaggle notebook.
+5. Optionally attach an independently generated reader submission and pass it
+   with `--reader-predictions`. The CSV must contain `StudyInstanceUID` and all
+   twelve target columns; it is validated against the competition test IDs and
+   rank-blended at inference.
 
 The script intentionally stops when pretrained weights cannot be found. This prevents an offline Kaggle run from silently using a randomly initialized backbone. It writes checkpoints to the configured output directory and produces `submission.csv`.
 
@@ -87,9 +91,12 @@ Example commands from the experiment directory:
 ```bash
 python train_rsna_knee_v6.py
 python train_rsna_knee_v6.py --backbone b3 --runs 2 --epochs 7
+python train_rsna_knee_v6.py --runs 5 \
+  --reader-predictions /kaggle/input/reader-submission/submission.csv \
+  --reader-rank-weight 0.30
 ```
 
-Useful options include `--debug-max-studies`, `--budget-hours`, `--device`, `--labels-csv`, `--image-size`, and `--batch-size`. The script supports offline EfficientNet-B0 and EfficientNet-B3 checkpoints; the checkpoint filename must match the torchvision filename expected by the selected backbone. Use `--no-pretrained` only for debugging, not for a scored submission.
+Useful options include `--debug-max-studies`, `--budget-hours`, `--device`, `--labels-csv`, `--reader-predictions`, `--reader-rank-weight`, `--image-size`, and `--batch-size`. The script supports offline EfficientNet-B0 and EfficientNet-B3 checkpoints; the checkpoint filename must match the torchvision filename expected by the selected backbone. Use `--no-pretrained` only for debugging, not for a scored submission.
 
 The script can also fall back to the local metadata under `data/` for development, but the corresponding DICOM directories are still required for image loading.
 
