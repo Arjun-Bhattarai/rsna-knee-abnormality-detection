@@ -29,6 +29,12 @@ def preprocess_volume(
         raise TypeError(
             f"Expected NumPy array or torch.Tensor, got {type(volume)}"
         )
+    if volume.ndim != 3:
+        raise ValueError(
+            f"Expected volume shape (D, H, W), got {volume.shape}"
+        )
+    if volume.size == 0:
+        raise ValueError("Volume contains no slices.")
 
     # Normalize intensity
     volume = percentile_normalize(volume)
