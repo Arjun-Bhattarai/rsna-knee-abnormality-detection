@@ -1,130 +1,51 @@
 # RSNA Knee Abnormality Detection
 
-A PyTorch research project for the RSNA Knee Abnormality Detection Kaggle competition. The pipeline predicts 12 study-level knee MRI abnormalities from sagittal, coronal, and axial views, using metadata-aware series selection, DICOM preprocessing, slice aggregation, and multi-view fusion.
+This repository contains a PyTorch research pipeline for the RSNA Knee Abnormality Detection competition. It predicts twelve study-level findings from sagittal, coronal, and axial knee MRI series: ACL, MCL, medial meniscus, lateral meniscus, medial OA, lateral OA, PF OA, effusion, synovitis, Baker's cyst, contusion, and fracture.
 
-## What This Project Does
+The project combines metadata-aware series selection, DICOM loading, intensity normalization, fixed-depth slice sampling, shared image encoding, attention-based slice aggregation, three-view fusion, and multi-label prediction. The modular implementation is kept under `src/`, while the versioned competition workflows are kept under `experiments/`.
 
-For each MRI study, the pipeline:
+## Current workflow
 
-1. Finds fluid-sensitive sagittal, coronal, and axial series in the metadata.
-2. Selects the strongest available series using sequence description and slice count.
-3. Loads, normalizes, resizes, and samples a fixed number of DICOM slices.
-4. Encodes slices with a shared image backbone.
-5. Aggregates slice features and fuses the three anatomical views.
-6. Predicts independent logits for 12 abnormalities:
+The recommended competition workflow is version 6 in `experiments/train_rsna_knee_v6.py`. It is designed for an offline Kaggle GPU session and uses locally attached pretrained EfficientNet weights rather than attempting to download weights during execution. It also supports report-derived labels, expert-label overrides, cached DICOM preprocessing, repeated training runs, test-time augmentation, and optional rank blending with an independent reader prediction file.
 
-`ACL`, `MCL`, `Medial Meniscus`, `Lateral Meniscus`, `Medial OA`, `Lateral OA`, `PF OA`, `Effusion`, `Synovitis`, `Baker's`, `Contusion`, and `Fracture`.
+The pipeline expects the competition metadata and DICOM directories to be available in the standard RSNA layout. The repository includes small metadata samples for development, but the full image data and pretrained weights are intentionally kept outside version control. Missing anatomical views are handled as empty views, and malformed or unreadable series are skipped safely so that one damaged series does not terminate a complete run.
 
-The modular components are covered by unit tests, while the versioned experiment scripts preserve the evolution of the competition training pipeline.
+The competition metric is macro ROC-AUC across all twelve findings. Because the expert-labelled subset is small, local validation scores should be interpreted cautiously and should not be treated as a direct replacement for leaderboard results.
 
-## Quick Start
+## Version history and score progression
 
-Create a virtual environment from the repository root, then install PyTorch for the target hardware and the remaining dependencies:
+Version 1 was the original competition attempt. It relied on a backbone that could fall back to random initialization when pretrained weights were unavailable in Kaggle's offline environment. That submission reached approximately 0.487, below the random-prediction reference point of about 0.50. The main lesson was that reliable offline weight loading was more important than further hyperparameter tuning.
 
-```bash
-python -m venv .venv
-# Windows PowerShell
-.\.venv\Scripts\Activate.ps1
-# macOS/Linux
-# source .venv/bin/activate
+Version 2 made offline pretrained weights mandatory and stopped instead of silently training a random backbone. It also introduced real augmentation, explicit missing-label handling, per-target class weighting, differential learning rates, warmup and cosine scheduling, more reliable series ordering, additional slices, gradient clipping, early stopping, test-time augmentation, and weighted fold ensembling. These changes established the foundation for meaningful training.
 
-python -m pip install --upgrade pip
-python -m pip install torch torchvision pandas numpy scikit-learn pydicom pytest pyyaml tqdm
-```
+Version 3 refined the pretrained multi-view training workflow and improved the handling of the competition's incomplete labels. Its main limitation was that the majority of studies still contributed little or no useful training signal because only 58 of the 4,407 training studies had expert labels. The resulting validation and submission behaviour showed that improving label coverage was the next major opportunity.
 
-For CUDA, install the PyTorch build that matches the target machine from the [official PyTorch selector](https://pytorch.org/get-started/locally/) before installing the remaining packages.
+Version 4 introduced weak supervision for the previously unlabeled studies. It generated soft labels from multilingual radiology reports using keyword matching, clause-level negation, and side attribution. It also decoded each DICOM series once into a reusable uint8 cache, normalized laterality so medial and lateral findings remained spatially consistent, removed unsafe horizontal flips, and used the expert studies for checkpoint selection. This was the first major score improvement, with reported leaderboard results reaching approximately 0.644 and later 0.742 and 0.762 as expert weighting and ensembling were improved.
 
-`requirements.txt` is intentionally empty in this checkout, so the explicit install command above is the reliable setup path.
+Version 5 consolidated the strongest version 4 recipe and corrected several operational issues. It retained the validated weak-label parser, expert-label weighting, probability averaging, and repeated-run ensemble. It separated checkpoint selection from training labels to reduce validation leakage, fixed a study-ID series-plan failure, reduced unnecessary cache flushing, and made larger hidden-test cache creation safer. The best reported version 5 result was approximately 0.763 from a validated three-run probability ensemble. Additional five-run and repeated-run experiments scored approximately 0.759 and 0.755, demonstrating that more runs do not automatically improve macro ROC-AUC.
 
-## Data Layout
+Version 6 focuses on improving the quality and reliability of weak supervision rather than simply increasing model size. It prefers an attached hybrid or consensus report-label CSV when available, keeps expert labels as hard overrides, assigns a low-confidence prior to unmentioned findings instead of treating silence as a confirmed negative, uses denser 2.5D slice windows, and adds masked multi-instance aggregation for focal abnormalities. It also adds more controlled augmentation, a global fusion head, optional EfficientNet-B3 support, configurable slice sampling, configurable MIL blending, stronger runtime safeguards, and optional reader rank blending. Version 6 has not yet received a separate leaderboard score, so these changes should be evaluated through reproducible submissions rather than assumed to improve the score.
 
-The training code expects study-level labels, series metadata, and DICOM files in the competition layout. The checked-in CSV files are metadata samples; the DICOM image directories are not included in this repository.
+## Changes most likely to improve the score
 
-```text
-dataset/
-	train.csv
-	test.csv
-	train_series.csv
-	test_series.csv
-	train_series/
-		<StudyInstanceUID>/<SeriesInstanceUID>/*.dcm
-	test_series/
-		<StudyInstanceUID>/<SeriesInstanceUID>/*.dcm
-```
+The highest-impact improvement is ensuring that the backbone is initialized from the correct offline ImageNet checkpoint. A missing checkpoint can reduce the entire submission to near-random performance, regardless of the training schedule or model head.
 
-Required metadata columns:
+The next major improvement is increasing the quality and coverage of training labels. The expert set contains only 58 studies, so a carefully validated hybrid or consensus report-label dataset is more valuable than treating the remaining reports as unlabeled. External labels should be checked for study-ID coverage, target-column completeness, finite values, and compatibility with the competition test distribution. Expert labels should always override weak or external labels.
 
-- `train.csv`: `StudyInstanceUID` plus all 12 target columns.
-- `train_series.csv` and `test_series.csv`: `StudyInstanceUID`, `SeriesInstanceUID`, `Fluid_Sensitive`, and `Anatomical_Plane`.
+Weak labels should express uncertainty. Explicit positive and negative report evidence can receive stronger weights, ambiguous language should receive a much smaller weight, and unmentioned findings should not automatically become hard negatives. This reduces label noise and is especially important for rare findings such as ACL injury, fracture, synovitis, and contusion.
 
-The modular dataset drops training rows with missing target labels. Missing anatomical views are represented by zero tensors, allowing studies with incomplete view coverage to be loaded.
+Laterality and anatomical view consistency are also critical. Horizontal flips can exchange medial and lateral abnormalities, which directly harms four target columns. Selecting complementary fluid-sensitive series, ordering slices consistently, and normalizing right-knee orientation are safer improvements than generic image augmentation.
 
-## Validate the Installation
+Caching the decoded DICOM data improves both speed and experiment quality. Faster epochs allow more controlled runs, expert-aware checkpoint selection, and probability ensembling within the GPU time limit. The cache is an efficiency improvement, but it becomes a score improvement only when the recovered time is used for better validation, stronger labels, or genuinely complementary models.
 
-From the repository root:
+Repeated probability ensembles are more reliable than blindly increasing the number of runs. The reported results show that a validated three-run ensemble outperformed the tested five-run and repeated variants. Run diversity, independent validation, and stable checkpoint selection matter more than ensemble size alone.
 
-```bash
-python -m pytest -q
-```
+An independent reader model can provide complementary signal when its predictions are complete and validated against every test study. Version 6 can blend reader predictions by per-target rank, which is appropriate for an AUC-based competition metric. The blend weight should be treated as an experiment parameter and checked against out-of-fold evidence; a reader model that is highly correlated with the image model may add little.
 
-The model tests use small fake backbones where possible, so the test suite does not require the full MRI dataset.
+## Repository guidance
 
-## Run Training on Kaggle
+The `src/` package contains reusable preprocessing, data, model, loss, metric, and training components. The `experiments/` directory preserves the chronological competition workflows so that earlier assumptions and reported results remain reproducible. The `tests/` directory covers the modular components and important edge cases, including malformed inputs, missing series, slice sampling, model shapes, and metric handling.
 
-The versioned scripts in `experiments/` are designed for Kaggle's competition directory layout and use CUDA automatically when it is available. The latest workflow is `experiments/train_rsna_knee_v6.py`.
+Full DICOM data, pretrained weights, generated caches, checkpoints, and submissions should remain outside version control. The current modular test suite is designed to run without the full competition dataset or a GPU.
 
-Before a scored offline run:
-
-1. Attach the RSNA competition data to the notebook or execution environment.
-2. Attach a dataset containing the matching torchvision pretrained checkpoint.
-3. Add the weight dataset path to `CFG.WEIGHT_DIRS` if it is not already searched.
-4. Run the selected script from `experiments/` in the Kaggle notebook.
-5. Optionally attach an independently generated reader submission and pass it
-   with `--reader-predictions`. The CSV must contain `StudyInstanceUID` and all
-   twelve target columns; it is validated against the competition test IDs and
-   rank-blended at inference.
-
-The script intentionally stops when pretrained weights cannot be found. This prevents an offline Kaggle run from silently using a randomly initialized backbone. It writes checkpoints to the configured output directory and produces `submission.csv`.
-
-Example commands from the experiment directory:
-
-```bash
-python train_rsna_knee_v6.py
-python train_rsna_knee_v6.py --backbone b3 --runs 2 --epochs 7
-python train_rsna_knee_v6.py --runs 5 \
-  --reader-predictions /kaggle/input/reader-submission/submission.csv \
-  --reader-rank-weight 0.30
-```
-
-Useful options include `--debug-max-studies`, `--budget-hours`, `--device`, `--labels-csv`, `--reader-predictions`, `--reader-rank-weight`, `--image-size`, and `--batch-size`. The script supports offline EfficientNet-B0 and EfficientNet-B3 checkpoints; the checkpoint filename must match the torchvision filename expected by the selected backbone. Use `--no-pretrained` only for debugging, not for a scored submission.
-
-The script can also fall back to the local metadata under `data/` for development, but the corresponding DICOM directories are still required for image loading.
-
-## Experiment Results
-
-The initial Kaggle submission from `arjun.ipynb` achieved an approximate score of **0.487**, below the random-prediction reference point of about 0.50. The main suspected cause was a missing ImageNet checkpoint in the offline Kaggle environment, followed by training with a randomly initialized backbone.
-
-The v2 training script addressed this by requiring pretrained weights to be staged locally before model creation. The 0.487 result should not be treated as a benchmark for the corrected pipeline.
-
-### Reported Kaggle Scores
-
-The following scores were reported from successive experiments. They are leaderboard results, not local validation AUC values.
-
-| Experiment stage | Reported score | Notes |
-| --- | ---: | --- |
-| Initial `arjun.ipynb` submission | 0.487 | Random or unavailable pretrained backbone suspected |
-| Early v4 weak-supervision pipeline | 0.644 | First weak-label and DICOM-cache version |
-| v4 with expert-label training | 0.742 | Gold studies added to training |
-| v4 gold-label weighting and ensemble update | 0.762 | Improved expert-label supervision |
-| v4 validated three-run probability ensemble | **0.763** | Best reported score |
-| Five-run logit ensemble experiment | 0.759 | Regression; reverted |
-| Repeated three-run experiment | 0.755 | Run-to-run leaderboard variance observed |
-
-Version 5 contains the latest label, validation, caching, and training-stability improvements recorded in the original experiment history. Version 6 extends the offline workflow with improved weak-label handling, denser slice sampling, optional report-label CSVs, and additional training controls; it has not yet received a separate Kaggle leaderboard score.
-
-## Practical Notes
-
-- The competition metric is macro ROC-AUC over the 12 study-level findings.
-- `scripts/check_folds.py` reports fold and label distributions from `data/train.csv`.
-- Keep DICOM datasets, pretrained weights, checkpoints, caches, and generated predictions outside version control.
-- Compare the versioned experiment scripts before selecting a training workflow; they are retained to make changes reproducible.
+Reported leaderboard values in this document are historical observations from the project and are not guarantees of future performance. Any new score should be recorded together with the exact version, label source, backbone, image settings, number of runs, ensemble method, and validation procedure.
