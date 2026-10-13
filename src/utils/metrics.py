@@ -26,15 +26,23 @@ def macro_roc_auc(
     scores = []
 
     for i in range(targets.shape[1]):
-        # AUC is undefined when a validation fold
-        # contains only one class.
-        if len(np.unique(targets[:, i])) < 2:
+        target_values = targets[:, i]
+        pred_values = predictions[:, i]
+        valid = np.isfinite(target_values) & np.isfinite(pred_values)
+        if valid.sum() < 2:
+            continue
+
+        y = target_values[valid]
+        scores_i = pred_values[valid]
+
+        # AUC is undefined when a validation fold contains only one class.
+        if len(np.unique(y)) < 2:
             continue
 
         scores.append(
             roc_auc_score(
-                targets[:, i],
-                predictions[:, i],
+                y,
+                scores_i,
             )
         )
 
