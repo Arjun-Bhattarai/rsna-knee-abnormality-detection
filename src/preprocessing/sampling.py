@@ -20,9 +20,10 @@ def uniform_sample_slices(
         )
 
     depth = volume.shape[0]
-
     if depth == 0:
         raise ValueError("Volume contains no slices.")
+    if num_slices <= 0:
+        raise ValueError(f"num_slices must be positive, got {num_slices}.")
 
     indices = torch.linspace(
         0,
@@ -30,4 +31,4 @@ def uniform_sample_slices(
         steps=num_slices,
     ).round().long()
 
-    return volume[indices]
+    return volume[indices.clamp(0, depth - 1)]
