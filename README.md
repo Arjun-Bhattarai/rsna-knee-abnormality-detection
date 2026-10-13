@@ -14,18 +14,60 @@ The competition metric is macro ROC-AUC across all twelve findings. Because the 
 
 ## Reported scores
 
-The scores below are historical Kaggle leaderboard results from this project. They are included as reference points, not guarantees, and experiments with different seeds or label sources can vary.
+The table below records the Kaggle notebook submissions supplied for this project. Scores are public leaderboard ROC-AUC values, not local validation scores. Failed, timed-out, and currently running versions are retained because they are useful for reproducing the experiment history.
 
-| Version or experiment | Score | Main change |
-| --- | ---: | --- |
-| Initial submission | 0.487 | Random or unavailable pretrained backbone |
-| v4 weak supervision | 0.644 | Report-derived soft labels and DICOM caching |
-| v4 with expert-label training | 0.742 | Added expert studies to training |
-| v4 with expert weighting and ensemble updates | 0.762 | Stronger gold-label influence and improved ensembling |
-| Best validated three-run ensemble | **0.763** | Probability averaging with validated checkpoint selection |
-| Five-run logit ensemble | 0.759 | More runs, but a less effective ensemble strategy |
-| Repeated three-run experiment | 0.755 | Demonstrated run-to-run leaderboard variance |
-| v6 | Not yet scored | Hybrid report labels, denser sampling, MIL controls, and reader blending |
+| Notebook version | Status | Public score |
+| ---: | --- | ---: |
+| 51 | Running | Pending |
+| 50 | Exception | — |
+| 49 | Succeeded | **0.882** |
+| 48 | Succeeded | 0.879 |
+| 47 | Exception | — |
+| 46 | Succeeded | 0.877 |
+| 45 | Succeeded | 0.879 |
+| 44 | Exception | — |
+| 43 | Succeeded | 0.757 |
+| 42 | Succeeded | 0.736 |
+| 41 | Exception | — |
+| 40 | Succeeded | 0.731 |
+| 39 | Succeeded | 0.742 |
+| 38 | Succeeded | 0.731 |
+| 37 | Succeeded | 0.728 |
+| 36 | Exception | — |
+| 35 | Succeeded | 0.759 |
+| 34 | Succeeded | 0.728 |
+| 33 | Succeeded | 0.735 |
+| 32 | Succeeded | 0.754 |
+| 31 | Succeeded | 0.756 |
+| 30 | Succeeded | 0.762 |
+| 29 | Succeeded | 0.762 |
+| 28 | Succeeded | 0.749 |
+| 27 | Exception | — |
+| 26 | Succeeded | 0.755 |
+| 25 | Succeeded | 0.759 |
+| 24 | Succeeded | 0.763 |
+| 23 | Succeeded | 0.762 |
+| 22 | Succeeded | 0.742 |
+| 21 | Timeout | — |
+| 20 | Timeout | — |
+| 19 | Succeeded | 0.567 |
+| 18 | Timeout | — |
+| 17 | Succeeded | 0.564 |
+| 16 | Succeeded | 0.574 |
+| 15 | Out of memory | — |
+| 14 | Succeeded | 0.644 |
+| 13 | Succeeded | 0.565 |
+| 12 | Succeeded | 0.520 |
+| 11 | Succeeded | 0.568 |
+| 10 | Exception | — |
+| 9 | Succeeded | 0.574 |
+| 8 | Timeout | — |
+| 7 | Succeeded | 0.487 |
+| 5 | Exception | — |
+
+The current best recorded public score is **0.882 from notebook version 49**, improving on the previous 0.879 results from versions 45 and 48. This is a substantial improvement over the initial 0.487 submission and the earlier v4/v5-era best of approximately 0.763. The results also show that reliability matters: a notebook that throws an exception, times out, or runs out of memory cannot produce a competitive submission regardless of its intended model changes.
+
+The version labels in the notebook history are Kaggle notebook revisions and do not map one-to-one to the repository script names. The v6 workflow remains the latest checked-in experiment script, while the version 49 score is the latest confirmed public result provided for the broader notebook iteration history.
 
 ## Version history and score progression
 
