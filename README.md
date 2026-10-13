@@ -12,6 +12,21 @@ The pipeline expects the competition metadata and DICOM directories to be availa
 
 The competition metric is macro ROC-AUC across all twelve findings. Because the expert-labelled subset is small, local validation scores should be interpreted cautiously and should not be treated as a direct replacement for leaderboard results.
 
+## Reported scores
+
+The scores below are historical Kaggle leaderboard results from this project. They are included as reference points, not guarantees, and experiments with different seeds or label sources can vary.
+
+| Version or experiment | Score | Main change |
+| --- | ---: | --- |
+| Initial submission | 0.487 | Random or unavailable pretrained backbone |
+| v4 weak supervision | 0.644 | Report-derived soft labels and DICOM caching |
+| v4 with expert-label training | 0.742 | Added expert studies to training |
+| v4 with expert weighting and ensemble updates | 0.762 | Stronger gold-label influence and improved ensembling |
+| Best validated three-run ensemble | **0.763** | Probability averaging with validated checkpoint selection |
+| Five-run logit ensemble | 0.759 | More runs, but a less effective ensemble strategy |
+| Repeated three-run experiment | 0.755 | Demonstrated run-to-run leaderboard variance |
+| v6 | Not yet scored | Hybrid report labels, denser sampling, MIL controls, and reader blending |
+
 ## Version history and score progression
 
 Version 1 was the original competition attempt. It relied on a backbone that could fall back to random initialization when pretrained weights were unavailable in Kaggle's offline environment. That submission reached approximately 0.487, below the random-prediction reference point of about 0.50. The main lesson was that reliable offline weight loading was more important than further hyperparameter tuning.
