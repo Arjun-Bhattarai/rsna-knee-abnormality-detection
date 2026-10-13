@@ -14,60 +14,17 @@ The competition metric is macro ROC-AUC across all twelve findings. Because the 
 
 ## Reported scores
 
-The table below records the Kaggle notebook submissions supplied for this project. Scores are public leaderboard ROC-AUC values, not local validation scores. Failed, timed-out, and currently running versions are retained because they are useful for reproducing the experiment history.
+The scores below are selected Kaggle public leaderboard milestones. They show the progression of the project without listing every failed run or small run-to-run fluctuation.
 
-| Notebook version | Status | Public score |
-| ---: | --- | ---: |
-| 51 | Running | Pending |
-| 50 | Exception | — |
-| 49 | Succeeded | **0.882** |
-| 48 | Succeeded | 0.879 |
-| 47 | Exception | — |
-| 46 | Succeeded | 0.877 |
-| 45 | Succeeded | 0.879 |
-| 44 | Exception | — |
-| 43 | Succeeded | 0.757 |
-| 42 | Succeeded | 0.736 |
-| 41 | Exception | — |
-| 40 | Succeeded | 0.731 |
-| 39 | Succeeded | 0.742 |
-| 38 | Succeeded | 0.731 |
-| 37 | Succeeded | 0.728 |
-| 36 | Exception | — |
-| 35 | Succeeded | 0.759 |
-| 34 | Succeeded | 0.728 |
-| 33 | Succeeded | 0.735 |
-| 32 | Succeeded | 0.754 |
-| 31 | Succeeded | 0.756 |
-| 30 | Succeeded | 0.762 |
-| 29 | Succeeded | 0.762 |
-| 28 | Succeeded | 0.749 |
-| 27 | Exception | — |
-| 26 | Succeeded | 0.755 |
-| 25 | Succeeded | 0.759 |
-| 24 | Succeeded | 0.763 |
-| 23 | Succeeded | 0.762 |
-| 22 | Succeeded | 0.742 |
-| 21 | Timeout | — |
-| 20 | Timeout | — |
-| 19 | Succeeded | 0.567 |
-| 18 | Timeout | — |
-| 17 | Succeeded | 0.564 |
-| 16 | Succeeded | 0.574 |
-| 15 | Out of memory | — |
-| 14 | Succeeded | 0.644 |
-| 13 | Succeeded | 0.565 |
-| 12 | Succeeded | 0.520 |
-| 11 | Succeeded | 0.568 |
-| 10 | Exception | — |
-| 9 | Succeeded | 0.574 |
-| 8 | Timeout | — |
-| 7 | Succeeded | 0.487 |
-| 5 | Exception | — |
+| Milestone | Public score | What changed |
+| --- | ---: | --- |
+| Initial submission | 0.487 | Baseline with an unavailable or randomly initialized backbone |
+| First weak-supervision pipeline | 0.644 | Report-derived labels and reusable DICOM caching |
+| Expert-label and ensemble improvements | 0.763 | Stronger expert supervision and validated probability ensembling |
+| Best early notebook result | 0.879 | Later notebook iteration with improved training and inference |
+| **Best recorded result** | **0.882** | Kaggle notebook Version 49 |
 
-The current best recorded public score is **0.882 from notebook version 49**, improving on the previous 0.879 results from versions 45 and 48. This is a substantial improvement over the initial 0.487 submission and the earlier v4/v5-era best of approximately 0.763. The results also show that reliability matters: a notebook that throws an exception, times out, or runs out of memory cannot produce a competitive submission regardless of its intended model changes.
-
-The version labels in the notebook history are Kaggle notebook revisions and do not map one-to-one to the repository script names. The v6 workflow remains the latest checked-in experiment script, while the version 49 score is the latest confirmed public result provided for the broader notebook iteration history.
+The best recorded public score is **0.882**, a substantial improvement over the initial 0.487 submission and the earlier 0.763 milestone. The latest checked-in workflow is version 6 in `experiments/train_rsna_knee_v6.py`; Kaggle notebook revision numbers do not map one-to-one to repository script versions.
 
 ## Version history and score progression
 
