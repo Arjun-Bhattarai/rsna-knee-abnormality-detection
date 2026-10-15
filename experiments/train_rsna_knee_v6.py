@@ -1615,10 +1615,10 @@ def generate_submission(test_df, test_series_df, gates, deadline):
         predictions, rows = infer(model, loader, tta=True)
         ordered = np.zeros_like(predictions)
         ordered[rows] = predictions
-        if CFG.RANK_ENSEMBLE:
-            ordered = rank_columns(ordered)
         # Weight checkpoints by their independent weak-validation gate, as in
-        # the validated v5 ensemble. This reduces the impact of a poor run.
+        # the validated v5 ensemble. Keep probability information while
+        # combining checkpoints; rank-normalizing each checkpoint first can
+        # discard useful confidence differences between runs.
         weight = max(gates.get(run, 0.5) - 0.45, 0.02)
         accumulator += ordered * weight
         total_weight += weight
@@ -1628,6 +1628,10 @@ def generate_submission(test_df, test_series_df, gates, deadline):
             torch.cuda.empty_cache()
 
     accumulator /= max(total_weight, 1e-6)
+    if CFG.RANK_ENSEMBLE:
+        # AUC is rank-based, so normalize once after the complete image
+        # ensemble rather than once per checkpoint.
+        accumulator = rank_columns(accumulator)
     reader = load_reader_predictions(CFG.READER_PREDICTIONS, test_df)
     if reader is not None:
         reader_rank_weight = CFG.READER_RANK_WEIGHT
@@ -1871,3 +1875,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+s
