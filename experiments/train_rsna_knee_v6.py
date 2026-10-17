@@ -554,7 +554,50 @@ def find_external_labels_csv(explicit=None):
         elif os.path.isfile(explicit):
             return explicit
         else:
-            raise FileNotFoundError(f"Explicit labels CSV not found: {explicit}")
+            # Kaggle dataset slugs and mount paths can differ from the path
+            # shown in a notebook command. If the requested file name exists
+            # elsewhere under /kaggle/input, validate and use that exact file.
+            requested_name = os.path.basename(os.path.normpath(explicit)).lower()
+            search_root = CFG.KAGGLE_INPUT
+            matches = [
+                path for path in glob.glob(
+                    os.path.join(search_root, "**", requested_name),
+                    recursive=True,
+                )
+                if os.path.isfile(path)
+            ]
+            if len(matches) == 1:
+                log(
+                    f"Explicit labels path was not mounted; using matching "
+                    f"attached file: {matches[0]}"
+                )
+                return matches[0]
+            attached_csvs = []
+            if os.path.isdir(search_root):
+                attached_csvs = [
+                    path for path in glob.glob(
+                        os.path.join(search_root, "**", "*.csv"),
+                        recursive=True,
+                    )
+                    if os.path.basename(path).lower() not in {
+                        "train.csv", "test.csv", "train_series.csv",
+                        "test_series.csv", "sample_submission.csv",
+                        "submission.csv",
+                    }
+                ]
+            detail = (
+                f" No file named {requested_name!r} was found under "
+                f"{search_root}."
+            )
+            if attached_csvs:
+                detail += " Attached CSVs: " + ", ".join(
+                    attached_csvs[:12]
+                )
+            raise FileNotFoundError(
+                f"Explicit labels CSV not found: {explicit}.{detail} "
+                "Attach the label dataset in Kaggle Add Data and pass the "
+                "mounted CSV path, or omit --labels-csv to use auto-discovery."
+            )
     else:
         roots = [
             CFG.KAGGLE_INPUT,
