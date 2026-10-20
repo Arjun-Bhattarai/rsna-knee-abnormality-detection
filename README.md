@@ -1,4 +1,4 @@
-# RSNA Knee Abnormality Detection
+# RSNA Knee Abnormality Detection:
 
 This repository contains a PyTorch research pipeline for the RSNA Knee Abnormality Detection competition. It predicts twelve study-level findings from sagittal, coronal, and axial knee MRI series: ACL, MCL, medial meniscus, lateral meniscus, medial OA, lateral OA, PF OA, effusion, synovitis, Baker's cyst, contusion, and fracture.
 
