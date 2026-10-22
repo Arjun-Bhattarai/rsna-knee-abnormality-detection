@@ -1,6 +1,6 @@
 # RSNA Knee Abnormality Detection:
 
-A PyTorch pipeline for predicting **12 knee abnormalities** from MRI studies using multi-view imaging, report-derived weak labels, and attention-based feature fusion.
+A PyTorch pipeline developed for the RSNA Knee Abnormality Detection Kaggle competition, predicting 12 knee abnormalities from MRI studies using multi-view imaging, report-derived weak labels, and attention-based feature fusion.
 
 ## Results at a Glance
 
