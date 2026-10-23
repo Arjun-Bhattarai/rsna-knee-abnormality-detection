@@ -55,3 +55,19 @@ The experiment history shows several distinct phases. The score log records outc
 ## Reproducibility Note
 
 The workflow is intended for a Kaggle GPU environment and depends on the competition DICOM data and the expected pretrained checkpoint and label files. Dependencies and a fully verified end-to-end run are not established by the available notes. This is a research project, not a clinically validated diagnostic system.
+
+## Project Status
+
+This project is complete. The final Kaggle submission achieved a **0.866 ROC-AUC score on the private leaderboard** and ranked **4,800th**.
+
+The project demonstrates an end-to-end pipeline for detecting knee abnormalities from MRI studies using multi-view image processing, weak supervision from radiology reports, attention-based feature aggregation, and ensemble inference.
+
+The model is intended for research and educational purposes only. It has not been clinically validated and should not be used for medical diagnosis.
+
+## Future Improvements
+
+- Improve validation using patient-level cross-validation.
+- Experiment with stronger vision backbones and transformer-based architectures.
+- Improve handling of class imbalance and rare abnormalities.
+- Perform additional external validation on independent datasets.
+- Optimize inference speed and memory usage.
