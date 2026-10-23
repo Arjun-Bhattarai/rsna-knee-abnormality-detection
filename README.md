@@ -7,6 +7,8 @@ A PyTorch pipeline developed for the RSNA Knee Abnormality Detection Kaggle comp
 **Best public ROC-AUC: 0.882 — Kaggle Version 49**  
 Latest listed successful run: **0.881 — Version 52**
 
+**Private leaderboard result: 0.866 ROC-AUC — Rank 4,800**
+
 | Milestone | Public ROC-AUC | Change | What the milestone represents |
 |---|---:|---:|---|
 | Early baseline — V9 | 0.574 | — | Initial low-scoring experiments established a baseline. |
