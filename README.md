@@ -64,7 +64,7 @@ The project demonstrates an end-to-end pipeline for detecting knee abnormalities
 
 The model is intended for research and educational purposes only. It has not been clinically validated and should not be used for medical diagnosis.
 
-## Future Improvements
+## Future Improvements:
 
 - Improve validation using patient-level cross-validation.
 - Experiment with stronger vision backbones and transformer-based architectures.
